@@ -2898,28 +2898,14 @@ iter_end, exclude_iter_sel_end=True)
     def node_date(self, *args):
         """Insert Date Node in Tree"""
         curr_time = time.time()
+        top_node = "Diary"
         now_year = support.get_timestamp_str("%Y", curr_time)
         now_month = support.get_timestamp_str("%B", curr_time)
-        now_day = support.get_timestamp_str(self.journal_day_format, curr_time)
-        #print now_year, now_month, now_day
-        if self.curr_tree_iter:
-            curr_depth = self.treestore.iter_depth(self.curr_tree_iter)
-            if curr_depth == 0:
-                if self.treestore[self.curr_tree_iter][1] == now_year:
-                    self.node_child_exist_or_create(self.curr_tree_iter, now_month)
-                    self.node_date()
-                    return
-            else:
-                if self.treestore[self.curr_tree_iter][1] == now_month\
-                and self.treestore[self.treestore.iter_parent(self.curr_tree_iter)][1] == now_year:
-                    self.node_child_exist_or_create(self.curr_tree_iter, now_day)
-                    return
-                if self.treestore[self.curr_tree_iter][1] == now_year:
-                    self.node_child_exist_or_create(self.curr_tree_iter, now_month)
-                    self.node_date()
-                    return
-        self.node_child_exist_or_create(None, now_year)
-        self.node_date()
+        #now_day = support.get_timestamp_str(self.journal_day_format, curr_time)
+        self.node_child_exist_or_create(None, top_node)
+        self.node_child_exist_or_create(self.curr_tree_iter, now_year)
+        self.node_child_exist_or_create(self.curr_tree_iter, now_month)
+        # self.node_child_exist_or_create(self.curr_tree_iter, now_day)
 
     def get_node_children_list(self, father_tree_iter, level):
         """Return a string listing the node children"""
