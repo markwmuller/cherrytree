@@ -33,8 +33,7 @@ CtTreeView::~CtTreeView()
 
 void CtTreeView::set_cursor_safe(const Gtk::TreeIter& iter)
 {
-    auto parent = iter->parent();
-    if (parent) expand_row(get_model()->get_path(parent), false);
+    expand_to_path(get_model()->get_path(iter));
     set_cursor(get_model()->get_path(iter));
 }
 
@@ -96,6 +95,21 @@ void CtTextView::set_pixels_inside_wrap(int space_around_lines, int relative_wra
     Gtk::TextView::set_pixels_inside_wrap(pixels_around_wrap);
 }
 
+void CtTextView::set_selection_at_offset_n_delta(int offset, int delta, Glib::RefPtr<Gtk::TextBuffer> text_buffer /*=Glib::RefPtr<Gtk::TextBuffer>()*/)
+{
+    text_buffer = text_buffer ? text_buffer : get_buffer();
+    Gtk::TextIter target = text_buffer->get_iter_at_offset(offset);
+    if (target) {
+        text_buffer->place_cursor(target);
+        if (!target.forward_chars(delta)) {
+            // #print "? bad offset=%s, delta=%s on node %s" % (offset, delta, self.treestore[self.curr_tree_iter][1])
+        }
+        text_buffer->move_mark(text_buffer->get_selection_bound(), target);
+    } else {
+        // # print "! bad offset=%s, delta=%s on node %s" % (offset, delta, self.treestore[self.curr_tree_iter][1])
+    }
+}
+
 void CtTextView::_setFontForSyntax(const std::string& syntaxHighlighting)
 {
     Glib::RefPtr<Gtk::StyleContext> rStyleContext = get_style_context();
@@ -104,9 +118,10 @@ void CtTextView::_setFontForSyntax(const std::string& syntaxHighlighting)
     rStyleContext->add_provider(CtApp::R_cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
 }
 
+
 CtMainWin::CtMainWin(CtMenu* pCtMenu) : Gtk::ApplicationWindow(), _ctMenu(pCtMenu)
 {
-    set_icon(CtApp::R_icontheme->load_icon("cherrytree", 48));
+    set_icon(CtApp::R_icontheme->load_icon(CtConst::APP_NAME, 48));
     _scrolledwindowTree.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
     _scrolledwindowText.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
     _scrolledwindowTree.add(_ctTreeview);
@@ -131,11 +146,12 @@ CtMainWin::CtMainWin(CtMenu* pCtMenu) : Gtk::ApplicationWindow(), _ctMenu(pCtMen
     gtk_window_add_accel_group (GTK_WINDOW(gobj()), pCtMenu->default_accel_group());
     _pNodePopup = pCtMenu->build_popup_menu_node();
     _pNodePopup->show_all();
-    Gtk::Toolbar* pToolbar = pCtMenu->build_toolbar();
+    _pToolbar = pCtMenu->build_toolbar();
 
     _vboxMain.pack_start(*_pMenu, false, false);
-    _vboxMain.pack_start(*pToolbar, false, false);
+    _vboxMain.pack_start(*_pToolbar, false, false);
     _vboxMain.pack_start(_hPaned);
+    _vboxMain.pack_start(_initStatusBar(), false, false);
     add(_vboxMain);
     _ctTreestore.viewAppendColumns(&_ctTreeview);
     _ctTreestore.viewConnect(&_ctTreeview);
@@ -144,9 +160,11 @@ CtMainWin::CtMainWin(CtMenu* pCtMenu) : Gtk::ApplicationWindow(), _ctMenu(pCtMen
     _ctTreeview.signal_key_press_event().connect(sigc::mem_fun(*this, &CtMainWin::_onTheTreeviewSignalKeyPressEvent), false);
     _ctTreeview.signal_popup_menu().connect(sigc::mem_fun(*this, &CtMainWin::_onTheTreeviewSignalPopupMenu));
 
-    configApply();
+    signal_key_press_event().connect(sigc::mem_fun(*this, &CtMainWin::_onTheWindowSignalKeyPressEvent), false);
+
     _titleUpdate(false/*saveNeeded*/);
     show_all();
+    configApply(); // after show_all()
 }
 
 CtMainWin::~CtMainWin()
@@ -158,45 +176,72 @@ void CtMainWin::configApply()
 {
     _hPaned.property_position() = CtApp::P_ctCfg->hpanedPos;
     set_size_request(CtApp::P_ctCfg->winRect[2], CtApp::P_ctCfg->winRect[3]);
+    show_hide_tree_view(CtApp::P_ctCfg->treeVisible);
+    show_hide_win_header(CtApp::P_ctCfg->showNodeNameHeader);
+
+    show_hide_toolbar(CtApp::P_ctCfg->toolbarVisible);
+    _pToolbar->set_toolbar_style(Gtk::ToolbarStyle::TOOLBAR_ICONS);
+    set_toolbar_icon_size(CtApp::P_ctCfg->toolbarIconSize);
+
+    _ctStatusBar.progressBar.hide();
+    _ctStatusBar.stopButton.hide();
+}
+
+Gtk::HBox& CtMainWin::_initStatusBar()
+{
+    _ctStatusBar.statusId = _ctStatusBar.statusBar.get_context_id("");
+    _ctStatusBar.frame.set_shadow_type(Gtk::SHADOW_NONE);
+    _ctStatusBar.frame.set_border_width(1);
+    _ctStatusBar.frame.add(_ctStatusBar.progressBar);
+    _ctStatusBar.stopButton.set_image_from_icon_name("gtk-stop", Gtk::ICON_SIZE_MENU);
+    _ctStatusBar.hbox.pack_start(_ctStatusBar.statusBar, true, true);
+    _ctStatusBar.hbox.pack_start(_ctStatusBar.frame, false, true);
+    _ctStatusBar.hbox.pack_start(_ctStatusBar.stopButton, false, true);
+    _ctStatusBar.stopButton.signal_clicked().connect([this](){
+        _ctStatusBar.set_progress_stop(true);
+        _ctStatusBar.stopButton.hide();
+    });
+    _ctStatusBar.set_progress_stop(false);
+    return _ctStatusBar.hbox;
 }
 
 Gtk::EventBox& CtMainWin::_initWindowHeader()
 {
-    _windowHeader.nameLabel.set_padding(10, 0);
-    _windowHeader.nameLabel.set_ellipsize(Pango::EllipsizeMode::ELLIPSIZE_MIDDLE);
-    _windowHeader.lockIcon.set_from_icon_name("locked", Gtk::ICON_SIZE_MENU);
-    _windowHeader.lockIcon.hide();
-    _windowHeader.bookmarkIcon.set_from_icon_name("pin", Gtk::ICON_SIZE_MENU);
-    _windowHeader.bookmarkIcon.hide();
-    _windowHeader.headerBox.pack_start(_windowHeader.buttonBox, false, false);
-    _windowHeader.headerBox.pack_start(_windowHeader.nameLabel, true, true);
-    _windowHeader.headerBox.pack_start(_windowHeader.lockIcon, false, false);
-    _windowHeader.headerBox.pack_start(_windowHeader.bookmarkIcon, false, false);
-    _windowHeader.eventBox.add(_windowHeader.headerBox);
-    return _windowHeader.eventBox;
+    _ctWinHeader.nameLabel.set_padding(10, 0);
+    _ctWinHeader.nameLabel.set_ellipsize(Pango::EllipsizeMode::ELLIPSIZE_MIDDLE);
+    _ctWinHeader.lockIcon.set_from_icon_name("locked", Gtk::ICON_SIZE_MENU);
+    _ctWinHeader.lockIcon.hide();
+    _ctWinHeader.bookmarkIcon.set_from_icon_name("pin", Gtk::ICON_SIZE_MENU);
+    _ctWinHeader.bookmarkIcon.hide();
+    _ctWinHeader.headerBox.pack_start(_ctWinHeader.buttonBox, false, false);
+    _ctWinHeader.headerBox.pack_start(_ctWinHeader.nameLabel, true, true);
+    _ctWinHeader.headerBox.pack_start(_ctWinHeader.lockIcon, false, false);
+    _ctWinHeader.headerBox.pack_start(_ctWinHeader.bookmarkIcon, false, false);
+    _ctWinHeader.eventBox.add(_ctWinHeader.headerBox);
+    return _ctWinHeader.eventBox;
 }
 
 void CtMainWin::window_header_update()
 {
     // based on update_node_name_header
     std::string name = curr_tree_iter().get_node_name();
-    _windowHeader.eventBox.override_background_color(Gdk::RGBA(CtApp::P_ctCfg->ttDefBg));
+    _ctWinHeader.eventBox.override_background_color(Gdk::RGBA(CtApp::P_ctCfg->ttDefBg));
     std::string foreground = curr_tree_iter().get_node_foreground();
     foreground = foreground.empty() ? CtApp::P_ctCfg->ttDefFg : foreground;
-    _windowHeader.nameLabel.set_markup(
+    _ctWinHeader.nameLabel.set_markup(
                 "<b><span foreground=\"" + foreground + "\" size=\"xx-large\">"
-                + str::escape(name) + "</span></b>");
+                + str::xml_escape(name) + "</span></b>");
     window_header_update_last_visited();
 }
 
 void CtMainWin::window_header_update_lock_icon(bool show)
 {
-    show ? _windowHeader.lockIcon.show() : _windowHeader.lockIcon.hide();
+    show ? _ctWinHeader.lockIcon.show() : _ctWinHeader.lockIcon.hide();
 }
 
 void CtMainWin::window_header_update_bookmark_icon(bool show)
 {
-    show ? _windowHeader.bookmarkIcon.show() : _windowHeader.bookmarkIcon.hide();
+    show ? _ctWinHeader.bookmarkIcon.show() : _ctWinHeader.bookmarkIcon.hide();
 }
 
 
@@ -326,17 +371,39 @@ bool CtMainWin::_onTheTreeviewSignalButtonPressEvent(GdkEventButton* event)
     return false;
 }
 
+bool CtMainWin::_onTheWindowSignalKeyPressEvent(GdkEventKey* event)
+{
+    if (event->state & GDK_CONTROL_MASK) {
+        if (event->keyval == GDK_KEY_Tab) {
+            CtApp::P_ctActions->toggle_tree_text();
+            return true;
+        }
+    }
+    return false;
+}
+
 bool CtMainWin::_onTheTreeviewSignalKeyPressEvent(GdkEventKey* event)
 {
     if (!curr_tree_iter()) return false;
-    if (event->state & GDK_SHIFT_MASK)
-    {
+    if (event->state & GDK_SHIFT_MASK) {
         if (event->keyval == GDK_KEY_Up) {
             CtApp::P_ctActions->node_up();
             return true;
         }
         if (event->keyval == GDK_KEY_Down) {
             CtApp::P_ctActions->node_down();
+            return true;
+        }
+    }
+    else if (event->state & GDK_MOD1_MASK) {
+
+    }
+    else if (event->state & GDK_CONTROL_MASK) {
+
+    }
+    else {
+        if (event->keyval == GDK_KEY_Tab) {
+            CtApp::P_ctActions->toggle_tree_text();
             return true;
         }
     }
@@ -364,27 +431,6 @@ void CtMainWin::_titleUpdate(bool saveNeeded)
     title += CtConst::CT_VERSION;
     set_title(title);
 }
-
-CtTreeIter CtMainWin::curr_tree_iter()
-{
-    return CtTreeIter(_ctTreeview.get_selection()->get_selected(), &_ctTreestore.get_columns());
-}
-
-CtTreeStore& CtMainWin::get_tree_store()
-{
-    return _ctTreestore;
-}
-
-CtTreeView& CtMainWin::get_tree_view()
-{
-    return _ctTreeview;
-}
-
-CtTextView& CtMainWin::get_text_view()
-{
-    return _ctTextview;
-}
-
 
 CtDialogTextEntry::CtDialogTextEntry(const char* title, const bool forPassword, Gtk::Window* pParent)
 {

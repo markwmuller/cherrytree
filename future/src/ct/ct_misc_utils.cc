@@ -25,6 +25,8 @@
 #include <assert.h>
 #include "ct_misc_utils.h"
 #include "ct_app.h"
+#include <ctime>
+#include <regex>
 
 CtDocType CtMiscUtil::getDocType(std::string fileName)
 {
@@ -267,6 +269,151 @@ bool CtMiscUtil::node_siblings_sort_iteration(Glib::RefPtr<Gtk::TreeStore> model
     return swap_executed;
 }
 
+//"""Get the Node Hierarchical Name"""
+std::string CtMiscUtil::get_node_hierarchical_name(CtTreeIter tree_iter, const char* separator/*="--"*/,
+                                                   bool for_filename/*=true*/, bool root_to_leaf/*=true*/, const char* trailer/*=""*/)
+{
+    std::string hierarchical_name = str::trim(tree_iter.get_node_name());// todo: exports.clean_text_to_utf8(dad.treestore[tree_iter][1]).strip()
+    CtTreeIter father_iter = tree_iter.parent();
+    while (father_iter) {
+        std::string father_name = str::trim(father_iter.get_node_name());// todo: exports.clean_text_to_utf8(dad.treestore[father_iter][1]).strip()
+        if (root_to_leaf)
+            hierarchical_name = father_name + separator + hierarchical_name;
+        else
+            hierarchical_name = hierarchical_name + separator + father_name;
+        father_iter = father_iter.parent();
+    }
+    if (trailer)
+        hierarchical_name += trailer;
+    if (for_filename) {
+        hierarchical_name = clean_from_chars_not_for_filename(hierarchical_name);
+        if (hierarchical_name.size() > CtConst::MAX_FILE_NAME_LEN)
+            hierarchical_name = hierarchical_name.substr(hierarchical_name.size() - CtConst::MAX_FILE_NAME_LEN);
+    }
+    return hierarchical_name;
+}
+
+std::string CtMiscUtil::clean_from_chars_not_for_filename(std::string filename)
+{
+    filename = str::replace(filename, CtConst::CHAR_SLASH, CtConst::CHAR_MINUS);
+    filename = str::replace(filename, CtConst::CHAR_BSLASH, CtConst::CHAR_MINUS);
+    for (auto& str: {CtConst::CHAR_STAR, CtConst::CHAR_QUESTION, CtConst::CHAR_COLON, CtConst::CHAR_LESSER,
+         CtConst::CHAR_GREATER, CtConst::CHAR_PIPE, CtConst::CHAR_DQUOTE, CtConst::CHAR_NEWLINE, CtConst::CHAR_CR}) {
+        filename = str::replace(filename, str, "");
+    }
+    filename = str::trim(filename);
+    filename = str::replace(filename, " " /*todo: CtConst::CHAR_SPACE*/, CtConst::CHAR_USCORE);
+    return filename;
+}
+
+Gtk::BuiltinIconSize CtMiscUtil::getIconSize(int size)
+{
+    switch (size) {
+        case 1:  return Gtk::BuiltinIconSize::ICON_SIZE_MENU;
+        case 2:  return Gtk::BuiltinIconSize::ICON_SIZE_SMALL_TOOLBAR;
+        case 3:  return Gtk::BuiltinIconSize::ICON_SIZE_LARGE_TOOLBAR;
+        case 4:  return Gtk::BuiltinIconSize::ICON_SIZE_DND;
+        case 5:  return Gtk::BuiltinIconSize::ICON_SIZE_DIALOG;
+        default: return Gtk::BuiltinIconSize::ICON_SIZE_MENU;
+    }
+}
+
+
+bool CtTextIterUtil::get_next_chars_from_iter_are(Gtk::TextIter text_iter, const Glib::ustring& chars_list)
+{
+    for (size_t i = 0; i < chars_list.size(); ++i)
+    {
+        if (text_iter.get_char() != chars_list[i])
+            return false;
+        if (!text_iter.forward_char() && i+1 != chars_list.size())
+            return false;
+    }
+    return true;
+}
+
+bool CtTextIterUtil::get_next_chars_from_iter_are(Gtk::TextIter text_iter, const std::vector<Glib::ustring>& chars_list_vec)
+{
+    for (const auto& chars_list: chars_list_vec)
+        if (get_next_chars_from_iter_are(text_iter, chars_list))
+            return true;
+    return false;
+}
+
+void CtTextIterUtil::rich_text_attributes_update(const Gtk::TextIter& text_iter, std::map<const gchar*, std::string>& curr_attributes)
+{
+    std::vector<Glib::RefPtr<const Gtk::TextTag>> toggled_off = text_iter.get_toggled_tags(false/*toggled_on*/);
+    for (const auto& r_curr_tag : toggled_off)
+    {
+        const Glib::ustring tag_name = r_curr_tag->property_name();
+        if (tag_name.empty() || CtConst::GTKSPELLCHECK_TAG_NAME == tag_name)
+        {
+            continue;
+        }
+        if (str::startswith(tag_name, "weight_")) curr_attributes[CtConst::TAG_WEIGHT] = "";
+        else if (str::startswith(tag_name, "foreground_")) curr_attributes[CtConst::TAG_FOREGROUND] = "";
+        else if (str::startswith(tag_name, "background_")) curr_attributes[CtConst::TAG_BACKGROUND] = "";
+        else if (str::startswith(tag_name, "style_")) curr_attributes[CtConst::TAG_STYLE] = "";
+        else if (str::startswith(tag_name, "underline_")) curr_attributes[CtConst::TAG_UNDERLINE] = "";
+        else if (str::startswith(tag_name, "strikethrough_")) curr_attributes[CtConst::TAG_STRIKETHROUGH] = "";
+        else if (str::startswith(tag_name, "scale_")) curr_attributes[CtConst::TAG_SCALE] = "";
+        else if (str::startswith(tag_name, "justification_")) curr_attributes[CtConst::TAG_JUSTIFICATION] = "";
+        else if (str::startswith(tag_name, "link_")) curr_attributes[CtConst::TAG_LINK] = "";
+        else if (str::startswith(tag_name, "family_")) curr_attributes[CtConst::TAG_FAMILY] = "";
+        else std::cerr << "Failure processing the toggling OFF tag " << tag_name << std::endl;
+    }
+    std::vector<Glib::RefPtr<const Gtk::TextTag>> toggled_on = text_iter.get_toggled_tags(true/*toggled_on*/);
+    for (const auto& r_curr_tag : toggled_on)
+    {
+        const Glib::ustring tag_name = r_curr_tag->property_name();
+        if (tag_name.empty() || CtConst::GTKSPELLCHECK_TAG_NAME == tag_name)
+        {
+            continue;
+        }
+        if (str::startswith(tag_name, "weight_")) curr_attributes[CtConst::TAG_WEIGHT] = tag_name.substr(7);
+        else if (str::startswith(tag_name, "foreground_")) curr_attributes[CtConst::TAG_FOREGROUND] = tag_name.substr(11);
+        else if (str::startswith(tag_name, "background_")) curr_attributes[CtConst::TAG_BACKGROUND] = tag_name.substr(11);
+        else if (str::startswith(tag_name, "scale_")) curr_attributes[CtConst::TAG_SCALE] = tag_name.substr(6);
+        else if (str::startswith(tag_name, "justification_")) curr_attributes[CtConst::TAG_JUSTIFICATION] = tag_name.substr(14);
+        else if (str::startswith(tag_name, "style_")) curr_attributes[CtConst::TAG_STYLE] = tag_name.substr(6);
+        else if (str::startswith(tag_name, "underline_")) curr_attributes[CtConst::TAG_UNDERLINE] = tag_name.substr(10);
+        else if (str::startswith(tag_name, "strikethrough_")) curr_attributes[CtConst::TAG_STRIKETHROUGH] = tag_name.substr(14);
+        else if (str::startswith(tag_name, "link_")) curr_attributes[CtConst::TAG_LINK] = tag_name.substr(5);
+        else if (str::startswith(tag_name, "family_")) curr_attributes[CtConst::TAG_FAMILY] = tag_name.substr(7);
+        else std::cerr << "Failure processing the toggling ON tag " << tag_name << std::endl;
+    }
+}
+
+bool CtTextIterUtil::tag_richtext_toggling_on_or_off(const Gtk::TextIter& text_iter)
+{
+    bool retVal{false};
+    std::vector<Glib::RefPtr<const Gtk::TextTag>> toggled_tags = text_iter.get_toggled_tags(false/*toggled_on*/);
+    ::vec::vector_extend(toggled_tags, text_iter.get_toggled_tags(true/*toggled_on*/));
+    for (const Glib::RefPtr<const Gtk::TextTag>& r_curr_tag : toggled_tags)
+    {
+        const Glib::ustring tag_name = r_curr_tag->property_name();
+        if (tag_name.empty() || CtConst::GTKSPELLCHECK_TAG_NAME == tag_name)
+        {
+            continue;
+        }
+        if ( (str::startswith(tag_name, "weight_")) ||
+             (str::startswith(tag_name, "foreground_")) ||
+             (str::startswith(tag_name, "background_")) ||
+             (str::startswith(tag_name, "scale_")) ||
+             (str::startswith(tag_name, "justification_")) ||
+             (str::startswith(tag_name, "style_")) ||
+             (str::startswith(tag_name, "underline_")) ||
+             (str::startswith(tag_name, "strikethrough_")) ||
+             (str::startswith(tag_name, "link_")) ||
+             (str::startswith(tag_name, "family_")) )
+        {
+            retVal = true;
+            break;
+        }
+    }
+    return retVal;
+}
+
+
 bool CtStrUtil::isStrTrue(const Glib::ustring& inStr)
 {
     bool retVal{false};
@@ -447,13 +594,34 @@ std::string CtRgbUtil::rgb_any_to_24(Gdk::RGBA color)
     return rgb24StrOut;
 }
 
-bool str::endswith(const std::string& str, const std::string& ending) {
+bool str::startswith(const std::string& str, const std::string& starting)
+{
+    if (str.length() >= starting.length())
+        return (0 == str.compare(0, starting.length(), starting));
+    return false;
+}
+
+bool str::endswith(const std::string& str, const std::string& ending)
+{
     if (str.length() >= ending.length())
         return (0 == str.compare(str.length() - ending.length(), ending.length(), ending));
     return false;
 }
 
-std::string str::escape(const std::string& text) {
+int str::indexOf(const Glib::ustring& str, const Glib::ustring& lookup_str)
+{
+    size_t index = str.find(lookup_str);
+    return index != std::string::npos ? static_cast<int>(index) : -1;
+}
+
+int str::indexOf(const Glib::ustring& str, const gunichar& uc)
+{
+    size_t index = str.find(Glib::ustring(1, uc));
+    return index != std::string::npos ? static_cast<int>(index) : -1;
+}
+
+std::string str::xml_escape(const std::string& text)
+{
     std::string buffer;
     buffer.reserve(text.size());
     for(size_t pos = 0; pos != text.size(); ++pos) {
@@ -467,4 +635,32 @@ std::string str::escape(const std::string& text) {
         }
     }
     return buffer;
+}
+
+
+std::string str::re_escape(const std::string& text)
+{
+    return Glib::Regex::escape_string(text);
+}
+
+std::string str::time_format(const std::string& format, const std::time_t& time)
+{
+    std::tm* localtime = std::localtime(&time);
+    char buffer[100];
+    if (strftime(buffer, sizeof(buffer), format.c_str(), localtime))
+        return buffer;
+    else if (strftime(buffer, sizeof(buffer), CtConst::TIMESTAMP_FORMAT_DEFAULT, localtime))
+        return buffer;
+    return "";
+}
+
+int str::symb_pos_to_byte_pos(const Glib::ustring& text, int symb_pos)
+{
+    gchar* pointer = g_utf8_offset_to_pointer(text.data(), symb_pos);
+    return (int)(pointer - text.data());
+}
+
+int str::byte_pos_to_symb_pos(const Glib::ustring& text, int byte_pos)
+{
+    return g_utf8_pointer_to_offset(text.data(), text.data() + byte_pos);
 }

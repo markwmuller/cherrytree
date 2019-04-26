@@ -49,6 +49,7 @@ public:
                                             std::list<CtAnchoredWidget*>& anchoredWidgets,
                                             xmlpp::Element* pNodeElement=nullptr);
     void populateTableMatrix(CtTableMatrix& tableMatrix, xmlpp::Element* pNodeElement=nullptr);
+
 private:
     void _xmlTreeWalkIter(xmlpp::Element* pNodeElement, const Gtk::TreeIter* pParentIter);
     Gtk::TreeIter _xmlNodeProcess(xmlpp::Element* pNodeElement, const Gtk::TreeIter* pParentIter);
@@ -56,6 +57,26 @@ private:
     void _getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer,
                             std::list<CtAnchoredWidget*>& anchoredWidgets,
                             xmlpp::Node *pNodeParent);
+};
+
+class CtXmlWrite : public xmlpp::Document
+{
+public:
+    CtXmlWrite(const char* filepath);
+    virtual ~CtXmlWrite();
+    void append_bookmarks(const std::list<gint64>& bookmarks);
+    void append_dom_node(CtTreeIter& ct_tree_iter,
+                         xmlpp::Element* p_node_parent=nullptr,
+                         bool to_disk=true,
+                         bool skip_children=true,
+                         const std::pair<int,int>& offset_range=std::make_pair(-1,-1));
+
+private:
+    void _rich_txt_serialize(xmlpp::Element* p_node_parent,
+                             Gtk::TextIter start_iter,
+                             Gtk::TextIter end_iter,
+                             std::map<const gchar*, std::string>& curr_attributes,
+                             gchar change_case='n');
 };
 
 class CtSQLiteRead : public CtDocRead

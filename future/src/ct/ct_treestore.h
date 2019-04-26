@@ -25,20 +25,7 @@
 #include <gtksourceviewmm.h>
 #include <set>
 
-class CtAnchoredWidget : public Gtk::EventBox
-{
-public:
-    CtAnchoredWidget(const int& charOffset, const std::string& justification);
-    void insertInTextBuffer(Glib::RefPtr<Gsv::Buffer> rTextBuffer);
-    Glib::RefPtr<Gtk::TextChildAnchor> getTextChildAnchor() { return _rTextChildAnchor; }
-    virtual void applyWidthHeight(int parentTextWidth) {}
-protected:
-    Gtk::Frame _frame;
-    Gtk::Label _labelWidget;
-    int _charOffset;
-    std::string _justification;
-    Glib::RefPtr<Gtk::TextChildAnchor> _rTextChildAnchor;
-};
+class CtAnchoredWidget;
 
 struct CtNodeData
 {
@@ -49,7 +36,7 @@ struct CtNodeData
     bool           isRO{false};
     guint32        customIconId{0};
     bool           isBold{false};
-    Glib::ustring  foregroundRgb24;
+    std::string    foregroundRgb24;
     gint64         tsCreation{0};
     gint64         tsLastSave{0};
     Glib::RefPtr<Gsv::Buffer>  rTextBuffer{nullptr};
@@ -77,7 +64,7 @@ public:
     Gtk::TreeModelColumn<Glib::RefPtr<Gdk::Pixbuf>>  rColPixbufAux;
     Gtk::TreeModelColumn<guint16>                    colCustomIconId;
     Gtk::TreeModelColumn<guint16>                    colWeight;
-    Gtk::TreeModelColumn<Glib::ustring>              colForeground;
+    Gtk::TreeModelColumn<std::string>                colForeground;
     Gtk::TreeModelColumn<gint64>                     colTsCreation;
     Gtk::TreeModelColumn<gint64>                     colTsLastSave;
     Gtk::TreeModelColumn<std::list<CtAnchoredWidget*>> colAnchoredWidgets;
@@ -85,20 +72,33 @@ public:
 
 class CtTreeIter : public Gtk::TreeIter
 {
-private:
-    const CtTreeModelColumns* _columns;
-
 public:
     CtTreeIter(Gtk::TreeIter iter, const CtTreeModelColumns* _columns);
 
     CtTreeIter  parent();
+    CtTreeIter  first_child();
 
-    bool        get_node_read_only();
-    void        set_node_read_only(bool val);
-    gint64      get_node_id();
-    std::string get_node_name();
-    std::string get_node_foreground();
-    void        set_node_aux_icon(Glib::RefPtr<Gdk::Pixbuf> rPixbuf);
+    bool          get_node_is_bold() const;
+    bool          get_node_read_only() const;
+    void          set_node_read_only(bool val);
+    gint64        get_node_id() const;
+    guint16       get_node_custom_icon_id() const;
+    Glib::ustring get_node_name() const;
+    void          set_node_name(const Glib::ustring& node_name);
+    Glib::ustring get_node_tags() const;
+    std::string   get_node_foreground() const;
+    std::string   get_node_syntax_highlighting() const;
+    std::time_t   get_node_creating_time() const;
+    std::time_t   get_node_modification_time() const;
+    void          set_node_aux_icon(Glib::RefPtr<Gdk::Pixbuf> rPixbuf);
+
+    Glib::RefPtr<Gsv::Buffer> get_node_text_buffer() const;
+
+    static guint16 get_pango_weight_from_is_bold(bool isBold);
+    static bool    get_is_bold_from_pango_weight(guint16 pangoWeight);
+
+private:
+    const CtTreeModelColumns* _columns;
 };
 
 class CtTextView;
@@ -106,7 +106,6 @@ class CtSQLiteRead;
 
 class CtTreeStore : public sigc::trackable
 {
-    friend class CtTreeIter;
 public:
     CtTreeStore();
     virtual ~CtTreeStore();
@@ -135,17 +134,18 @@ public:
     const std::set<std::string>& get_used_tags() { return _usedTags; }
     bool                         is_node_bookmarked(const gint64& node_id);
     std::string                  get_node_name_from_node_id(const gint64& node_id);
-    Gtk::TreeIter                get_tree_iter_from_node_id(const gint64& node_id);
+    CtTreeIter                   get_tree_iter_from_node_id(const gint64& node_id);
     const std::list<gint64>&     get_bookmarks();
-    void                         set_bookmarks(const std::list<gint64>& bookmarks_order);
+    void                         set_bookmarks(const std::list<gint64>& bookmarks);
 
 
     std::string get_tree_expanded_collapsed_string(Gtk::TreeView& treeView);
     void        set_tree_expanded_collapsed_string(const std::string& expanded_collapsed_string, Gtk::TreeView& treeView, bool nodes_bookm_exp);
 
-public:
     Glib::RefPtr<Gtk::TreeStore>    get_store();
     Gtk::TreeIter                   get_iter_first();
+    Gtk::TreeIter                   get_tree_iter_last_sibling(const Gtk::TreeNodeChildren& children);
+    Gtk::TreeIter                   get_tree_iter_prev_sibling(Gtk::TreeIter tree_iter);
     Gtk::TreePath                   get_path(Gtk::TreeIter tree_iter);
     CtTreeIter                      to_ct_tree_iter(Gtk::TreeIter tree_iter);
 
@@ -154,18 +154,14 @@ public:
     const CtTreeModelColumns& get_columns() { return _columns; }
 
 protected:
-    guint16                   _getPangoWeight(bool isBold);
-    bool                      _getBold(guint16 pangoWeight);
     Glib::RefPtr<Gdk::Pixbuf> _getNodeIcon(int nodeDepth, const std::string &syntax, guint32 customIconId);
     void                      _iterDeleteAnchoredWidgets(const Gtk::TreeModel::Children& children);
-
 
     Glib::RefPtr<Gsv::Buffer> _getNodeTextBuffer(const Gtk::TreeIter& treeIter);
 
     CtTreeModelColumns             _columns;
     Glib::RefPtr<Gtk::TreeStore>   _rTreeStore;
-    std::set<gint64>               _bookmarks;
-    std::list<gint64>              _bookmarks_order;
+    std::list<gint64>              _bookmarks;
     std::set<std::string>          _usedTags;
     std::map<gint64, std::string>  _nodes_names_dict; // for link tooltips
     CtSQLiteRead*                  _pCtSQLiteRead{nullptr};

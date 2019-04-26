@@ -1,4 +1,26 @@
+/*
+ * ct_dialogs.h
+ *
+ * Copyright 2017-2019 Giuseppe Penone <giuspen@gmail.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ * MA 02110-1301, USA.
+ */
+
 #pragma once
+
 #include <gtkmm/dialog.h>
 #include <gtkmm/liststore.h>
 #include <gtkmm/treestore.h>
@@ -53,5 +75,83 @@ Gtk::TreeIter choose_node_dialog(Gtk::Window& parent, Gtk::TreeView& parentTreeV
 
 // Handle the Bookmarks List
 void bookmarks_handle_dialog(CtMainWin* ctMainWin);
+
+// Dialog to select a Date
+std::time_t date_select_dialog(Gtk::Window& parent, const std::string& title, const std::time_t& curr_time);
+
+class CtMatchDialogStore : public Gtk::TreeStore
+{
+public:
+    struct CtMatchModelColumns : public Gtk::TreeModel::ColumnRecord
+    {
+       Gtk::TreeModelColumn<gint64>         node_id;
+       Gtk::TreeModelColumn<Glib::ustring>  node_name;
+       Gtk::TreeModelColumn<Glib::ustring>  node_hier_name;
+       Gtk::TreeModelColumn<int>            start_offset;
+       Gtk::TreeModelColumn<int>            end_offset;
+       Gtk::TreeModelColumn<int>            line_num;
+       Gtk::TreeModelColumn<Glib::ustring>  line_content;
+       CtMatchModelColumns() { add(node_id); add(node_name); add(node_hier_name);
+                               add(start_offset); add(end_offset); add(line_num); add(line_content); }
+    } columns;
+
+    std::array<int, 2> dlg_size;
+    std::array<int, 2> dlg_pos;
+    Gtk::TreePath      saved_path;
+
+public:
+    static Glib::RefPtr<CtMatchDialogStore> create()
+    {
+        Glib::RefPtr<CtMatchDialogStore> model(new CtMatchDialogStore());
+        model->set_column_types(model->columns);
+        return model;
+    }
+    void add_row(gint64 node_id, const std::string& node_name, const std::string& node_hier_name,
+                 int start_offset, int end_offset, int line_num, const std::string& line_content)
+    {
+        auto row = *append();
+        row[columns.node_hier_name] = node_hier_name;
+        row[columns.node_id] = node_id;             row[columns.node_name] = node_name;
+        row[columns.start_offset] = start_offset;   row[columns.end_offset] = end_offset;
+        row[columns.line_num] = line_num;           row[columns.line_content] = line_content;
+
+    }
+};
+
+// the All Matches Dialog
+void match_dialog(const std::string& title, CtMainWin& ctMainWin, Glib::RefPtr<CtMatchDialogStore> model);
+
+// Insert/Edit Anchor Name
+Glib::ustring img_n_entry_dialog(Gtk::Window& parent, const char* title,
+                                 const Glib::ustring& entry_content, const char* img_stock);
+
+struct CtLinkEntry
+{
+    Glib::ustring type;
+    gint64        node_id = -1;
+    Glib::ustring webs;
+    Glib::ustring file;
+    Glib::ustring fold;
+    Glib::ustring anch;
+    Gtk::TreeIter prev_node;
+};
+
+// Dialog to Insert/Edit Links
+bool link_handle_dialog(CtMainWin& ctMainWin, const Glib::ustring& title, Gtk::TreeIter sel_tree_iter,
+                        CtLinkEntry& link_entries);
+
+struct file_select_args
+{
+    Gtk::Window*                parent = nullptr;
+    Glib::ustring               curr_folder;
+    Glib::ustring               filter_name;
+    std::vector<Glib::ustring>  filter_pattern;
+    std::vector<Glib::ustring>  filter_mime;
+};
+// The Select file dialog, Returns the retrieved filepath or None
+Glib::ustring file_select_dialog(ct_dialogs::file_select_args args);
+
+// The Select folder dialog, returns the retrieved folderpath or None
+Glib::ustring folder_select_dialog(Glib::ustring curr_folder, Gtk::Window* parent = nullptr);
 
 } // namespace ct_dialogs
