@@ -1,5 +1,5 @@
 /*
- * ct_p7za_iface.h
+ * ct_export2txt.h
  *
  * Copyright 2017-2019 Giuseppe Penone <giuspen@gmail.com>
  *
@@ -20,12 +20,24 @@
  */
 
 #pragma once
-#include <glib/gtypes.h>
 
-namespace CtP7zaIface {
+#include <gtkmm/textiter.h>
+#include "ct_treestore.h"
+#include "ct_table.h"
 
-int p7za_extract(const gchar* input_path, const gchar* out_dir, const gchar* passwd);
+class CtExport2Txt
+{
+public:
+    CtExport2Txt();
 
-int p7za_archive(const gchar* input_path, const gchar* output_path, const gchar* passwd);
+public:
+    Glib::ustring node_export_to_txt(Glib::RefPtr<Gtk::TextBuffer> text_buffer, std::pair<int, int> sel_range,
+                                     bool check_link_target = false, Glib::ustring filepath = "", CtTreeIter* tree_iter_for_node_name = nullptr);
 
-} // namespace CtP7zaIface
+    Glib::ustring get_table_plain(CtTable* table_orig);
+    Glib::ustring get_codebox_plain(CtCodebox* codebox);
+
+private:
+    Glib::ustring _plain_process_slot(int start_offset, int end_offset, Glib::RefPtr<Gtk::TextBuffer> curr_buffer, bool check_link_target);
+    Glib::ustring _tag_link_in_given_iter(Gtk::TextIter iter);
+};

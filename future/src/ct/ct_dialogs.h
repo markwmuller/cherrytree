@@ -45,8 +45,20 @@ public:
     } columns;
 
 public:
-    static Glib::RefPtr<CtChooseDialogStore<GtkStoreBase>> create();
-    void add_row(const std::string& stock_id, const std::string& key, const std::string& desc, gint64 node_id = 0);
+    static Glib::RefPtr<CtChooseDialogStore<GtkStoreBase>> create()
+    {
+        Glib::RefPtr<CtChooseDialogStore<GtkStoreBase>> model(new CtChooseDialogStore<GtkStoreBase>());
+        model->set_column_types(model->columns);
+        return model;
+    }
+    void add_row(const std::string& stock_id, const std::string& key, const std::string& desc, gint64 node_id = 0)
+    {
+        auto row = *GtkStoreBase::append();
+        row[columns.stock_id] = stock_id;
+        row[columns.key] = key;
+        row[columns.desc] = desc;
+        row[columns.node_id] = node_id;
+    }
 };
 typedef CtChooseDialogStore<Gtk::ListStore> CtChooseDialogListStore;
 typedef CtChooseDialogStore<Gtk::TreeStore> CtChooseDialogTreeStore;
@@ -93,6 +105,7 @@ public:
        Gtk::TreeModelColumn<Glib::ustring>  line_content;
        CtMatchModelColumns() { add(node_id); add(node_name); add(node_hier_name);
                                add(start_offset); add(end_offset); add(line_num); add(line_content); }
+       virtual ~CtMatchModelColumns();
     } columns;
 
     std::array<int, 2> dlg_size;
@@ -100,6 +113,8 @@ public:
     Gtk::TreePath      saved_path;
 
 public:
+    virtual ~CtMatchDialogStore();
+
     static Glib::RefPtr<CtMatchDialogStore> create()
     {
         Glib::RefPtr<CtMatchDialogStore> model(new CtMatchDialogStore());
@@ -133,7 +148,6 @@ struct CtLinkEntry
     Glib::ustring file;
     Glib::ustring fold;
     Glib::ustring anch;
-    Gtk::TreeIter prev_node;
 };
 
 // Dialog to Insert/Edit Links
@@ -144,6 +158,7 @@ struct file_select_args
 {
     Gtk::Window*                parent = nullptr;
     Glib::ustring               curr_folder;
+    Glib::ustring               curr_file_name;
     Glib::ustring               filter_name;
     std::vector<Glib::ustring>  filter_pattern;
     std::vector<Glib::ustring>  filter_mime;
@@ -153,5 +168,15 @@ Glib::ustring file_select_dialog(ct_dialogs::file_select_args args);
 
 // The Select folder dialog, returns the retrieved folderpath or None
 Glib::ustring folder_select_dialog(Glib::ustring curr_folder, Gtk::Window* parent = nullptr);
+
+// The Save file as dialog, Returns the retrieved filepath or None
+Glib::ustring file_save_as_dialog(ct_dialogs::file_select_args args);
+
+// Insert/Edit Image
+Glib::RefPtr<Gdk::Pixbuf> image_handle_dialog(Gtk::Window& father_win, Glib::ustring title,
+                                              Glib::RefPtr<Gdk::Pixbuf> original_pixbuf);
+
+// Opens the CodeBox Handle Dialog
+bool codeboxhandle_dialog(Gtk::Window& father_win, const Glib::ustring& title);
 
 } // namespace ct_dialogs

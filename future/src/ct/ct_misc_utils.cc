@@ -22,11 +22,11 @@
 #include <pangomm.h>
 #include <iostream>
 #include <string.h>
-#include <assert.h>
 #include "ct_misc_utils.h"
 #include "ct_app.h"
 #include <ctime>
 #include <regex>
+#include <glib/gstdio.h> // to get stats
 
 CtDocType CtMiscUtil::getDocType(std::string fileName)
 {
@@ -87,6 +87,23 @@ Glib::RefPtr<Gsv::Buffer> CtMiscUtil::getNewTextBuffer(const std::string& syntax
         rRetTextBuffer->set_modified(false);
     }
     return rRetTextBuffer;
+}
+
+const gchar* CtMiscUtil::getTextIterAlignment(const Gtk::TextIter& textIter)
+{
+    const char* retVal{CtConst::TAG_PROP_VAL_LEFT};
+    for (const char* currAlignType : std::list{CtConst::TAG_PROP_VAL_LEFT,
+                                               CtConst::TAG_PROP_VAL_CENTER,
+                                               CtConst::TAG_PROP_VAL_FILL,
+                                               CtConst::TAG_PROP_VAL_RIGHT})
+    {
+        if (textIter.has_tag(CtApp::R_textTagTable->lookup(getTextTagNameExistOrCreate(CtConst::TAG_JUSTIFICATION, currAlignType))))
+        {
+            retVal = currAlignType;
+            break;
+        }
+    }
+    return retVal;
 }
 
 const Glib::ustring CtMiscUtil::getTextTagNameExistOrCreate(Glib::ustring propertyName, Glib::ustring propertyValue)
@@ -230,7 +247,30 @@ const Glib::ustring CtMiscUtil::getTextTagNameExistOrCreate(Glib::ustring proper
     return tagName;
 }
 
-void CtMiscUtil::widget_set_colors(Gtk::Widget& widget, const std::string& fg, const std::string& bg,
+// Get the tooltip for the underlying link
+Glib::ustring CtMiscUtil::sourceview_hovering_link_get_tooltip(const Glib::ustring& link)
+{
+    Glib::ustring tooltip;
+    auto vec = str::split(link, " ");
+    if (vec[0] == CtConst::LINK_TYPE_FILE || vec[0] == CtConst::LINK_TYPE_FOLD)
+        tooltip = Glib::Base64::decode(vec[1]);
+    else
+    {
+        if (vec[0] == CtConst::LINK_TYPE_NODE)
+            tooltip = CtApp::P_ctActions->getCtMainWin()->get_tree_store().get_node_name_from_node_id(std::stol(vec[1]));
+        else
+            tooltip = str::replace(vec[1], "amp;", "");
+        if (vec.size() >= 3)
+        {
+            if (vec.size() == 3) tooltip += "#" + vec[2];
+            else
+                tooltip += "#" + link.substr(vec[0].length() + vec[1].length() + 2);
+        }
+    }
+    return tooltip;
+}
+
+void CtMiscUtil::widget_set_colors(Gtk::Widget& widget, const std::string& fg, const std::string& /*bg*/,
                        bool syntax_highl, const std::string& gdk_col_fg)
 {
     if (syntax_highl) return;
@@ -287,8 +327,8 @@ std::string CtMiscUtil::get_node_hierarchical_name(CtTreeIter tree_iter, const c
         hierarchical_name += trailer;
     if (for_filename) {
         hierarchical_name = clean_from_chars_not_for_filename(hierarchical_name);
-        if (hierarchical_name.size() > CtConst::MAX_FILE_NAME_LEN)
-            hierarchical_name = hierarchical_name.substr(hierarchical_name.size() - CtConst::MAX_FILE_NAME_LEN);
+        if (hierarchical_name.size() > (size_t)CtConst::MAX_FILE_NAME_LEN)
+            hierarchical_name = hierarchical_name.substr(hierarchical_name.size() - (size_t)CtConst::MAX_FILE_NAME_LEN);
     }
     return hierarchical_name;
 }
@@ -318,6 +358,101 @@ Gtk::BuiltinIconSize CtMiscUtil::getIconSize(int size)
     }
 }
 
+// Try to Select a Word Forward/Backward the Cursor
+bool CtTextIterUtil::apply_tag_try_automatic_bounds(Glib::RefPtr<Gtk::TextBuffer> text_buffer, Gtk::TextIter iter_start)
+{
+    Gtk::TextIter iter_end = iter_start;
+    auto curr_char = iter_end.get_char();
+    auto re = Glib::Regex::create("\\w");
+    // 1) select alphanumeric + special
+    bool match = re->match(Glib::ustring(1, curr_char));
+    if (!match && CtApp::P_ctCfg->selwordChars.find(curr_char) == Glib::ustring::npos) {
+        iter_start.backward_char();
+        iter_end.backward_char();
+        curr_char = iter_end.get_char();
+        match = re->match(Glib::ustring(1, curr_char));
+        if (!match && CtApp::P_ctCfg->selwordChars.find(curr_char) == Glib::ustring::npos)
+            return false;
+    }
+    while (match || CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
+        if (!iter_end.forward_char()) break; // end of buffer
+        curr_char = iter_end.get_char();
+        match = re->match(Glib::ustring(1, curr_char));
+    }
+    iter_start.backward_char();
+    curr_char = iter_start.get_char();
+    match = re->match(Glib::ustring(1, curr_char));
+    while (match || CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
+        if (!iter_start.backward_char()) break; // start of buffer
+        curr_char = iter_start.get_char();
+        match = re->match(Glib::ustring(1, curr_char));
+    }
+    if (!match && CtApp::P_ctCfg->selwordChars.find(curr_char) == Glib::ustring::npos)
+        iter_start.forward_char();
+    // 2) remove non alphanumeric from borders
+    iter_end.backward_char();
+    curr_char = iter_end.get_char();
+    while (CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
+        if (!iter_end.backward_char()) break; // start of buffer
+        curr_char = iter_end.get_char();
+    }
+    iter_end.forward_char();
+    curr_char = iter_start.get_char();
+    while (CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
+        if (!iter_start.forward_char()) break; // end of buffer
+        curr_char = iter_start.get_char();
+    }
+    if (iter_end.compare(iter_start) > 0) {
+        text_buffer->move_mark(text_buffer->get_insert(), iter_start);
+        text_buffer->move_mark(text_buffer->get_selection_bound(), iter_end);
+        return true;
+    }
+    return false;
+}
+
+// Returns True if the characters compose a camel case word
+bool CtTextIterUtil::get_is_camel_case(Gtk::TextIter iter_start, int num_chars)
+{
+    Gtk::TextIter text_iter = iter_start;
+    int curr_state = 0;
+    auto re = Glib::Regex::create("\\w");
+    for (int i = 0; i < num_chars; ++i)
+    {
+        auto curr_char = text_iter.get_char();
+        bool alphanumeric = re->match(Glib::ustring(1, curr_char));
+        if (!alphanumeric)
+        {
+            curr_state = -1;
+            break;
+        }
+        if (curr_state == 0)
+        {
+            if (g_unichar_islower(curr_char))
+                curr_state = 1;
+        }
+        else if (curr_state == 1)
+        {
+            if (g_unichar_isupper(curr_char))
+                curr_state = 2;
+        }
+        else if (curr_state == 2)
+        {
+            if (g_unichar_islower(curr_char))
+                curr_state = 3;
+        }
+        text_iter.forward_char();
+    }
+    return curr_state == 3;
+}
+
+// Returns True if one set of the Given Chars are the first of in_string
+bool CtTextIterUtil::get_first_chars_of_string_are(const Glib::ustring& text, const std::vector<Glib::ustring>& chars_list)
+{
+    for (auto& chars: chars_list)
+        if (str::startswith(text, chars))
+            return true;
+    return false;
+}
 
 bool CtTextIterUtil::get_next_chars_from_iter_are(Gtk::TextIter text_iter, const Glib::ustring& chars_list)
 {
@@ -336,6 +471,23 @@ bool CtTextIterUtil::get_next_chars_from_iter_are(Gtk::TextIter text_iter, const
     for (const auto& chars_list: chars_list_vec)
         if (get_next_chars_from_iter_are(text_iter, chars_list))
             return true;
+    return false;
+}
+
+// Returns True if one set of the Given Chars are the first of in_string
+bool CtTextIterUtil::get_first_chars_of_string_at_offset_are(const Glib::ustring& in_string, int offset, const std::vector<Glib::ustring>& chars_list_vec)
+{
+    for (const auto& chars_list: chars_list_vec)
+    {
+        size_t len = chars_list.size();
+        if (in_string.size() < (size_t)offset + len)
+            continue;
+        bool good = true;
+        for (size_t i = 0; good && i < len; ++i)
+            good = in_string[(size_t)offset + i] == chars_list[i];
+        if (good)
+            return true;
+    }
     return false;
 }
 
@@ -413,6 +565,49 @@ bool CtTextIterUtil::tag_richtext_toggling_on_or_off(const Gtk::TextIter& text_i
     return retVal;
 }
 
+void CtTextIterUtil::generic_process_slot(int start_offset, int end_offset, Glib::RefPtr<Gtk::TextBuffer> text_buffer,
+                                          std::function<void(Gtk::TextIter&/*start_iter*/, Gtk::TextIter&/*curr_iter*/, std::map<const gchar*, std::string>&/*curr_attributes*/)> serialize_func)
+{
+    std::map<const gchar*, std::string> curr_attributes;
+    for (auto tag_property: CtConst::TAG_PROPERTIES)
+        curr_attributes[tag_property] = "";
+    Gtk::TextIter start_iter = text_buffer->get_iter_at_offset(start_offset);
+    Gtk::TextIter curr_iter = start_iter;
+    CtTextIterUtil::rich_text_attributes_update(curr_iter, curr_attributes);
+
+    bool tag_found = curr_iter.forward_to_tag_toggle(Glib::RefPtr<Gtk::TextTag>{nullptr});
+    bool one_more_serialize = true;
+    while (tag_found)
+    {
+        if (curr_iter.get_offset() > end_offset)
+            curr_iter = text_buffer->get_iter_at_offset(end_offset);
+        serialize_func(start_iter, curr_iter, curr_attributes);
+
+        int offset_old = curr_iter.get_offset();
+        if (offset_old >= end_offset)
+        {
+            one_more_serialize = false;
+            break;
+        }
+        else
+        {
+            CtTextIterUtil::rich_text_attributes_update(curr_iter, curr_attributes);
+            start_iter.set_offset(offset_old);
+            tag_found = curr_iter.forward_to_tag_toggle(Glib::RefPtr<Gtk::TextTag>{nullptr});
+            if (curr_iter.get_offset() == offset_old)
+            {
+                one_more_serialize = false;
+                break;
+            }
+        }
+    }
+    if (one_more_serialize)
+    {
+        if (curr_iter.get_offset() > end_offset)
+            curr_iter = text_buffer->get_iter_at_offset(end_offset);
+        serialize_func(start_iter, curr_iter, curr_attributes);
+    }
+}
 
 bool CtStrUtil::isStrTrue(const Glib::ustring& inStr)
 {
@@ -430,11 +625,11 @@ gint64 CtStrUtil::gint64FromGstring(const gchar* inGstring, bool hexPrefix)
     gint64 retVal;
     if (hexPrefix || g_strrstr(inGstring, "0x"))
     {
-        retVal = g_ascii_strtoll(inGstring, NULL, 16);
+        retVal = g_ascii_strtoll(inGstring, nullptr, 16);
     }
     else
     {
-        retVal = g_ascii_strtoll(inGstring, NULL, 10);
+        retVal = g_ascii_strtoll(inGstring, nullptr, 10);
     }
     return retVal;
 }
@@ -442,10 +637,13 @@ gint64 CtStrUtil::gint64FromGstring(const gchar* inGstring, bool hexPrefix)
 guint32 CtStrUtil::getUint32FromHexChars(const char* hexChars, guint8 numChars)
 {
     char hexstring[9];
-    assert(numChars < 9);
+    if (numChars > 8)
+    {
+        numChars = 8;
+    }
     strncpy(hexstring, hexChars, numChars);
     hexstring[numChars] = 0;
-    return (guint32)strtoul(hexstring, NULL, 16);
+    return (guint32)strtoul(hexstring, nullptr, 16);
 }
 
 std::vector<gint64> CtStrUtil::gstringSplit2int64(const gchar* inStr, const gchar* delimiter, gint max_tokens)
@@ -530,9 +728,9 @@ void CtRgbUtil::setRgb24StrFromRgb24Int(guint32 rgb24Int, char* rgb24StrOut)
 guint32 CtRgbUtil::getRgb24IntFromRgb24Str(const char* rgb24Str)
 {
     const char* scanStart = g_str_has_prefix(rgb24Str, "#") ? rgb24Str + 1 : rgb24Str;
-    guint8 r = (guint8)CtStrUtil::getUint32FromHexChars(scanStart, 2);
-    guint8 g = (guint8)CtStrUtil::getUint32FromHexChars(scanStart+2, 2);
-    guint8 b = (guint8)CtStrUtil::getUint32FromHexChars(scanStart+4, 2);
+    guint32 r = CtStrUtil::getUint32FromHexChars(scanStart, 2);
+    guint32 g = CtStrUtil::getUint32FromHexChars(scanStart+2, 2);
+    guint32 b = CtStrUtil::getUint32FromHexChars(scanStart+4, 2);
     return (r << 16 | g << 8 | b);
 }
 
@@ -563,6 +761,48 @@ char* CtRgbUtil::setRgb24StrFromStrAny(const char* rgbStrAny, char* rgb24StrOut)
             sprintf(rgb24StrOut, "#");
     }
     return rgb24StrOut;
+}
+
+Glib::ustring CtRgbUtil::rgb_to_no_white(Glib::ustring in_rgb)
+{
+    char out_rgb[16] = {};
+    const char* scanStart = in_rgb[0] == '#' ? in_rgb.c_str() + 1 : in_rgb.c_str();
+    if (strlen(scanStart) == 12)
+    {
+        guint32 r = CtStrUtil::getUint32FromHexChars(scanStart, 4);
+        guint32 g = CtStrUtil::getUint32FromHexChars(scanStart+4, 4);
+        guint32 b = CtStrUtil::getUint32FromHexChars(scanStart+8, 4);
+        // r+g+b black is 0
+        // r+g+b white is 3*65535
+        guint32 max_48 = 65535;
+        if (r+g+b > 2.2 * max_48)
+        {
+            r = max_48 - r;
+            g = max_48 - g;
+            b = max_48 - b;
+            sprintf(out_rgb, "#%.4x%.4x%.4x", r, g, b);
+            return out_rgb;
+        }
+    }
+    else
+    {
+        guint32 rgb24Int = getRgb24IntFromStrAny(scanStart);
+        guint32 r = (rgb24Int >> 16) & 0xff;
+        guint32 g = (rgb24Int >> 8) & 0xff;
+        guint32 b = rgb24Int & 0xff;
+        // r+g+b black is 0
+        // r+g+b white is 3*255
+        guint32 max_24 = 255;
+        if (r+g+b > 2.2*max_24)
+        {
+            r = max_24 - r;
+            g = max_24 - g;
+            b = max_24 - b;
+            sprintf(out_rgb, "#%.2x%.2x%.2x", r, g, b);
+            return out_rgb;
+        }
+    }
+    return in_rgb;
 }
 
 std::string CtRgbUtil::getRgb24StrFromStrAny(const std::string& rgbStrAny)
@@ -662,5 +902,112 @@ int str::symb_pos_to_byte_pos(const Glib::ustring& text, int symb_pos)
 
 int str::byte_pos_to_symb_pos(const Glib::ustring& text, int byte_pos)
 {
-    return g_utf8_pointer_to_offset(text.data(), text.data() + byte_pos);
+    return (int)g_utf8_pointer_to_offset(text.data(), text.data() + byte_pos);
+}
+
+Glib::ustring str::swapcase(const Glib::ustring& text)
+{
+    Glib::ustring ret_text;
+    for (size_t index = 0; index < text.size(); ++index)
+    {
+        // takes every symbol and tries to figure out if it's uppercase or not
+        // to change the case
+        Glib::ustring test_text(text, index, 1);
+        if (test_text == test_text.uppercase())
+            test_text = test_text.lowercase();
+        else
+            test_text = test_text.uppercase();
+        ret_text += test_text;
+    }
+    return ret_text;
+}
+
+Glib::ustring CtFileSystem::get_proper_platform_filepath(Glib::ustring filepath)
+{
+    if (CtConst::IS_WIN_OS)
+        filepath = str::replace(filepath, CtConst::CHAR_SLASH, CtConst::CHAR_BSLASH);
+    else
+        filepath = str::replace(filepath, CtConst::CHAR_BSLASH, CtConst::CHAR_SLASH);
+    return filepath;
+}
+
+bool CtFileSystem::isdir(const Glib::ustring& path)
+{
+    return Glib::file_test(path, Glib::FILE_TEST_IS_DIR);
+}
+
+bool CtFileSystem::isfile(const Glib::ustring& path)
+{
+    return Glib::file_test(path, Glib::FILE_TEST_IS_REGULAR);
+}
+
+Glib::ustring CtFileSystem::basename(const Glib::ustring& path)
+{
+    const gchar* allocated_name = g_path_get_basename(path.c_str());
+    Glib::ustring name = allocated_name;
+    g_free((gpointer)allocated_name);
+    return name;
+}
+
+Glib::ustring CtFileSystem::dirname(const Glib::ustring& path)
+{
+    const gchar* allocated_dir = g_path_get_dirname(path.c_str());
+    Glib::ustring dir = allocated_dir;
+    g_free((gpointer)allocated_dir);
+    return dir;
+}
+
+Glib::ustring CtFileSystem::abspath(const Glib::ustring& path)
+{
+    // todo:
+    return path;
+}
+
+Glib::ustring CtFileSystem::join(const Glib::ustring& path1, const Glib::ustring& path2)
+{
+    // todo: improve the trick
+    const auto sep = CtConst::IS_WIN_OS ? CtConst::CHAR_BSLASH : CtConst::CHAR_SLASH;
+    return path1 + sep + path2;
+}
+
+time_t CtFileSystem::getmtime(const Glib::ustring& path)
+{
+    time_t time = 0;
+    GStatBuf st;
+    if (g_stat(path.c_str(), &st) == 0)
+        time = st.st_mtime;
+    return time;
+}
+
+// Open Filepath with External App
+void CtFileSystem::external_filepath_open(const Glib::ustring& filepath, bool open_fold_if_no_app_error)
+{
+    /* todo:
+    if self.filelink_custom_action[0]:
+        if cons.IS_WIN_OS: filepath = cons.CHAR_DQUOTE + filepath + cons.CHAR_DQUOTE
+        else: filepath = re.escape(filepath)
+        subprocess.call(self.filelink_custom_action[1] % filepath, shell=True)
+    else:
+        if cons.IS_WIN_OS:
+            try: os.startfile(filepath)
+            except:
+                if open_fold_if_no_app_error: os.startfile(os.path.dirname(filepath))
+        else: subprocess.call(config.LINK_CUSTOM_ACTION_DEFAULT_FILE % re.escape(filepath), shell=True)
+        */
+    g_app_info_launch_default_for_uri(("file://" + filepath).c_str(), nullptr, nullptr);
+}
+
+// Open Folderpath with External App
+void CtFileSystem::external_folderpath_open(const Glib::ustring& folderpath)
+{
+    /* todo:
+    if self.folderlink_custom_action[0]:
+        if cons.IS_WIN_OS: filepath = cons.CHAR_DQUOTE + filepath + cons.CHAR_DQUOTE
+        else: filepath = re.escape(filepath)
+        subprocess.call(self.folderlink_custom_action[1] % filepath, shell=True)
+    else:
+        if cons.IS_WIN_OS: os.startfile(filepath)
+        else: subprocess.call(config.LINK_CUSTOM_ACTION_DEFAULT_FILE % re.escape(filepath), shell=True)
+        */
+    g_app_info_launch_default_for_uri(("folder://" + folderpath).c_str(), nullptr, nullptr);
 }

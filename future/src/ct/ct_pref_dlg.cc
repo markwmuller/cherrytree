@@ -12,6 +12,11 @@
 #include "ct_dialogs.h"
 #include "ct_codebox.h"
 
+CtPrefDlg::UniversalModelColumns::~UniversalModelColumns()
+{
+
+}
+
 CtPrefDlg::CtPrefDlg(CtMainWin* parent, CtMenu* pCtMenu)
     : Gtk::Dialog (_("Preferences"), *parent, true)
 {
@@ -37,6 +42,11 @@ CtPrefDlg::CtPrefDlg(CtMainWin* parent, CtMenu* pCtMenu)
     get_content_area()->show_all();
 
     add_button(Gtk::Stock::CLOSE, 1);
+}
+
+CtPrefDlg::~CtPrefDlg()
+{
+
 }
 
 Gtk::Widget* CtPrefDlg::build_tab_text_n_code()
@@ -173,13 +183,13 @@ Gtk::Widget* CtPrefDlg::build_tab_text_n_code()
     pMainBox->pack_start(*frame_text_editor, false, false);
     pMainBox->pack_start(*frame_misc_all, false, false);
 
-    textview_special_chars->get_buffer()->signal_changed().connect([config, textview_special_chars](){
+    textview_special_chars->get_buffer()->signal_changed().connect([this, config, textview_special_chars](){
         Glib::ustring new_special_chars = textview_special_chars->get_buffer()->get_text();
         str::replace(new_special_chars, CtConst::CHAR_NEWLINE, "");
         if (config->specialChars != new_special_chars)
         {
             config->specialChars = new_special_chars;
-            //support.set_menu_items_special_chars();
+            _pCtMainWin->set_menu_items_special_chars();
         }
     });
     button_reset->signal_clicked().connect([this, textview_special_chars](){
@@ -188,7 +198,7 @@ Gtk::Widget* CtPrefDlg::build_tab_text_n_code()
     });
     spinbutton_tab_width->signal_value_changed().connect([this, config, spinbutton_tab_width](){
         config->tabsWidth = spinbutton_tab_width->get_value_as_int();
-        _pCtMainWin->get_text_view().set_tab_width(config->tabsWidth);
+        _pCtMainWin->get_text_view().set_tab_width((guint)config->tabsWidth);
     });
     spinbutton_wrapping_indent->signal_value_changed().connect([this, config, spinbutton_wrapping_indent](){
         config->wrappingIndent = spinbutton_wrapping_indent->get_value_as_int();
@@ -412,19 +422,21 @@ Gtk::Widget* CtPrefDlg::build_tab_rich_text()
         //else: dad.spell_check_set_off(True)
         combobox_spell_check_lang->set_sensitive(config->enableSpellCheck);
     });
-    combobox_spell_check_lang->signal_changed().connect([config, combobox_spell_check_lang](){
+    combobox_spell_check_lang->signal_changed().connect([/*config, combobox_spell_check_lang*/](){
         //new_iter = combobox.get_active_iter()
         //new_lang_code = dad.spell_check_lang_liststore[new_iter][0]
         //if new_lang_code != dad.spell_check_lang: dad.spell_check_set_new_lang(new_lang_code)
     });
     colorbutton_text_fg->signal_color_set().connect([this, config, colorbutton_text_fg](){
         config->rtDefFg = CtRgbUtil::rgb_any_to_24(colorbutton_text_fg->get_rgba());
+        _pCtMainWin->configureTheme();
         //if dad.curr_tree_iter and dad.syntax_highlighting == cons.RICH_TEXT_ID:
         //    dad.widget_set_colors(dad.sourceview, dad.rt_def_fg, dad.rt_def_bg, False)
         //    support.rich_text_node_modify_codeboxes_color(dad.curr_buffer.get_start_iter(), dad)
     });
     colorbutton_text_bg->signal_color_set().connect([this, config, colorbutton_text_bg](){
         config->rtDefBg = CtRgbUtil::rgb_any_to_24(colorbutton_text_bg->get_rgba());
+        _pCtMainWin->configureTheme();
         //if dad.curr_tree_iter and dad.syntax_highlighting == cons.RICH_TEXT_ID:
         //    if dad.rt_highl_curr_line:
         //        dad.set_sourcebuffer_with_style_scheme()
@@ -750,13 +762,11 @@ Gtk::Widget* CtPrefDlg::build_tab_tree_1()
 
     colorbutton_tree_fg->signal_color_set().connect([this, config, colorbutton_tree_fg](){
         config->ttDefFg = CtRgbUtil::rgb_any_to_24(colorbutton_tree_fg->get_rgba());
-        _pCtMainWin->treeview_set_colors();
-        if (_pCtMainWin->curr_tree_iter()) _pCtMainWin->window_header_update();
+        _pCtMainWin->configureTheme();
     });
     colorbutton_tree_bg->signal_color_set().connect([this, config, colorbutton_tree_bg](){
         config->ttDefBg = CtRgbUtil::rgb_any_to_24(colorbutton_tree_bg->get_rgba());
-        _pCtMainWin->treeview_set_colors();
-        if (_pCtMainWin->curr_tree_iter()) _pCtMainWin->window_header_update();
+        _pCtMainWin->configureTheme();
     });
     radiobutton_tt_col_light->signal_toggled().connect([radiobutton_tt_col_light, colorbutton_tree_fg, colorbutton_tree_bg](){
         if (!radiobutton_tt_col_light->get_active()) return;
@@ -953,11 +963,13 @@ Gtk::Widget* CtPrefDlg::build_tab_fonts()
 
     fontbutton_rt->signal_font_set().connect([this, config, fontbutton_rt](){
         config->rtFont = fontbutton_rt->get_font_name();
+        _pCtMainWin->configureTheme();
         //if dad.curr_tree_iter and dad.syntax_highlighting == cons.RICH_TEXT_ID:
         //    dad.sourceview.modify_font(pango.FontDescription(dad.rt_font))
     });
-    fontbutton_pt->signal_font_set().connect([config, fontbutton_pt](){
+    fontbutton_pt->signal_font_set().connect([this, config, fontbutton_pt](){
         config->ptFont = fontbutton_pt->get_font_name();
+        _pCtMainWin->configureTheme();
         //if not dad.curr_tree_iter: return
         //if dad.syntax_highlighting == cons.PLAIN_TEXT_ID:
         //    dad.sourceview.modify_font(pango.FontDescription(dad.pt_font))
@@ -965,16 +977,18 @@ Gtk::Widget* CtPrefDlg::build_tab_fonts()
         //    support.rich_text_node_modify_codeboxes_font(dad.curr_buffer.get_start_iter(), dad)
         //    support.rich_text_node_modify_tables_font(dad.curr_buffer.get_start_iter(), dad)
     });
-    fontbutton_code->signal_font_set().connect([config, fontbutton_code](){
+    fontbutton_code->signal_font_set().connect([this, config, fontbutton_code](){
         config->codeFont = fontbutton_code->get_font_name();
+        _pCtMainWin->configureTheme();
         //if not dad.curr_tree_iter: return
         //if dad.syntax_highlighting not in [cons.RICH_TEXT_ID, cons.PLAIN_TEXT_ID]:
         //    dad.sourceview.modify_font(pango.FontDescription(dad.code_font))
         //elif dad.syntax_highlighting == cons.RICH_TEXT_ID:
         //    support.rich_text_node_modify_codeboxes_font(dad.curr_buffer.get_start_iter(), dad)
     });
-    fontbutton_tree->signal_font_set().connect([config, fontbutton_tree](){
+    fontbutton_tree->signal_font_set().connect([this, config, fontbutton_tree](){
         config->treeFont = fontbutton_tree->get_font_name();
+        _pCtMainWin->configureTheme();
         //dad.set_treeview_font()
     });
     return pMainBox;
@@ -1457,7 +1471,7 @@ Gtk::Widget* CtPrefDlg::build_tab_misc()
         config->wordCountOn = checkbutton_word_count->get_active();
         //dad.update_selected_node_statusbar_info()
     });
-    combobox_country_language->signal_changed().connect([this, config, combobox_country_language](){
+    combobox_country_language->signal_changed().connect([this, /*config, */combobox_country_language](){
         Glib::ustring new_lang = combobox_country_language->get_active_text();
         need_restart(RESTART_REASON::LANG, _("The New Language will be Available Only After Restarting CherryTree"));
         // config->countryLang = new_lang;
@@ -1512,7 +1526,7 @@ void CtPrefDlg::fill_commands_model(Glib::RefPtr<Gtk::ListStore> model)
     }
 }
 
-void CtPrefDlg::add_new_command_in_model(Glib::RefPtr<Gtk::ListStore> model)
+void CtPrefDlg::add_new_command_in_model(Glib::RefPtr<Gtk::ListStore> /*model*/)
 {
     std::set<std::string> used_code_exec_keys;
     for (auto& it: CtApp::P_ctCfg->customCodexecType)
@@ -1695,7 +1709,7 @@ bool CtPrefDlg::edit_shortcut_dialog(std::string& shortcut)
         Glib::ustring keyname = gdk_keyval_name(key->keyval);
         if (keyname.size() == 1) keyname = keyname.uppercase();
         key_entry->set_text(keyname);
-        key_entry->select_region(0, keyname.size());
+        key_entry->select_region(0, (int)keyname.size());
         return true;
     }, false);
 

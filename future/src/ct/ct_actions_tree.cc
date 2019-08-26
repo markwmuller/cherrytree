@@ -26,7 +26,7 @@
 #include "ct_app.h"
 #include "ct_dialogs.h"
 #include "ct_doc_rw.h"
-#include <time.h>
+#include <ctime>
 
 bool dialog_node_prop(std::string title, Gtk::Window& parent, CtNodeData& nodeData, const std::set<std::string>& tags_set);
 
@@ -71,6 +71,25 @@ bool CtActions::_is_curr_node_not_syntax_highlighting_or_error(bool plain_text_o
     else
         ct_dialogs::warning_dialog(_("This Feature is Not Available in Automatic Syntax Highlighting Nodes"), *_pCtMainWin);
     return false;
+}
+
+// Put Selection Upon the achrored widget
+void CtActions::object_set_selection(CtAnchoredWidget* widget)
+{
+    Gtk::TextIter iter_object = curr_buffer()->get_iter_at_child_anchor(widget->getTextChildAnchor());
+    Gtk::TextIter iter_bound = iter_object;
+    iter_bound.forward_char();
+    if (dynamic_cast<CtImage*>(widget))
+        _pCtMainWin->get_text_view().grab_focus();
+    curr_buffer()->select_range(iter_object, iter_bound);
+}
+
+// Returns True if there's not a node selected or is not rich text
+bool CtActions::_node_sel_and_rich_text()
+{
+    if (!_is_there_selected_node_or_error()) return false;
+    if (!_is_curr_node_not_syntax_highlighting_or_error()) return false;
+    return true;
 }
 
 void CtActions::_node_add(bool duplicate, bool add_child)
@@ -127,7 +146,7 @@ void CtActions::_node_add_with_data(Gtk::TreeIter curr_iter, CtNodeData& nodeDat
     else
         nodeIter = _pCtTreestore->appendNode(&nodeData);
 
-    _pCtTreestore->ctdb_handler()->pending_new_db_node(nodeData.nodeId);
+    _pCtTreestore->to_ct_tree_iter(nodeIter).pending_new_db_node();
     _pCtTreestore->nodes_sequences_fix(curr_iter ? curr_iter->parent() : Gtk::TreeIter(), false);
     _pCtTreestore->updateNodeAuxIcon(nodeIter);
     _pCtMainWin->get_tree_view().set_cursor_safe(nodeIter);
@@ -243,7 +262,6 @@ void CtActions::node_edit()
     _pCtMainWin->get_text_view().set_editable(!newData.isRO);
     //todo: self.update_selected_node_statusbar_info()
     _pCtTreestore->updateNodeAuxIcon(_pCtMainWin->curr_tree_iter());
-    _pCtMainWin->treeview_set_colors();
     _pCtMainWin->window_header_update();
     _pCtMainWin->window_header_update_lock_icon(newData.isRO);
     _pCtMainWin->update_window_save_needed("npro");
@@ -449,7 +467,7 @@ bool dialog_node_prop(std::string title, Gtk::Window& parent, CtNodeData& nodeDa
     c_icon_checkbutton.set_active(map::exists(CtConst::NODES_STOCKS, nodeData.customIconId));
     auto c_icon_button = Gtk::Button();
     if (c_icon_checkbutton.get_active())
-        c_icon_button.set_image(*CtImage::new_image_from_stock(CtConst::NODES_STOCKS.at(nodeData.customIconId), Gtk::ICON_SIZE_BUTTON));
+        c_icon_button.set_image(*CtImage::new_image_from_stock(CtConst::NODES_STOCKS.at((int)nodeData.customIconId), Gtk::ICON_SIZE_BUTTON));
     else {
         c_icon_button.set_label(_("click me"));
         c_icon_button.set_sensitive(false);
@@ -497,7 +515,7 @@ bool dialog_node_prop(std::string title, Gtk::Window& parent, CtNodeData& nodeDa
     ((Gtk::Label*)type_frame.get_label_widget())->set_use_markup(true);
     type_frame.set_shadow_type(Gtk::SHADOW_NONE);
     type_frame.add(type_vbox);
-    type_frame.set_sensitive(nodeData.isRO == false);
+    type_frame.set_sensitive(!nodeData.isRO);
     auto tags_hbox = Gtk::HBox();
     tags_hbox.set_spacing(2);
     auto tags_entry = Gtk::Entry();
@@ -569,7 +587,7 @@ bool dialog_node_prop(std::string title, Gtk::Window& parent, CtNodeData& nodeDa
             itemStore->add_row(pair.second, std::to_string(pair.first), "");
         auto res = ct_dialogs::choose_item_dialog(parent, _("Select Node Icon"), itemStore);
         if (res) {
-            nodeData.customIconId = std::stoi(res->get_value(itemStore->columns.key));
+            nodeData.customIconId = static_cast<guint32>(std::stoi(res->get_value(itemStore->columns.key)));
             c_icon_button.set_label("");
             c_icon_button.set_image(*CtImage::new_image_from_stock(res->get_value(itemStore->columns.stock_id), Gtk::ICON_SIZE_BUTTON));
         }

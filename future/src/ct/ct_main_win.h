@@ -27,31 +27,8 @@
 #include "ct_treestore.h"
 #include "ct_misc_utils.h"
 #include "ct_menu.h"
+#include "ct_widgets.h"
 
-class CtTreeView : public Gtk::TreeView
-{
-public:
-    CtTreeView();
-    virtual ~CtTreeView();
-    void set_cursor_safe(const Gtk::TreeIter& iter);
-
-protected:
-};
-
-class CtTextView : public Gsv::View
-{
-public:
-    CtTextView();
-    virtual ~CtTextView();
-
-    void setupForSyntax(const std::string& syntaxHighlighting);
-    void set_pixels_inside_wrap(int space_around_lines, int relative_wrapped_space);
-    void set_selection_at_offset_n_delta(int offset, int delta, Glib::RefPtr<Gtk::TextBuffer> text_buffer = Glib::RefPtr<Gtk::TextBuffer>());
-
-    static const double TEXT_SCROLL_MARGIN;
-protected:
-    void _setFontForSyntax(const std::string& syntaxHighlighting);
-};
 
 class CtDialogTextEntry : public Gtk::Dialog
 {
@@ -77,6 +54,7 @@ struct CtStatusBar
 
     void set_progress_stop(bool stop) { _progress_stop = stop; }
     bool is_progress_stop()           { return _progress_stop; }
+    void update_status(const Glib::ustring& text) { statusBar.pop(statusId); statusBar.push(text, statusId); }
 
 private:
     bool _progress_stop;
@@ -101,9 +79,11 @@ public:
     virtual ~CtMainWin();
 
     bool readNodesFromGioFile(const Glib::RefPtr<Gio::File>& r_file, const bool isImport);
-    void configApply();
-    void update_window_save_needed(const std::string& update_type = "",
-                                   bool new_machine_state = false, void* give_tree_iter = nullptr) { /* todo: */ }
+    void config_apply_before_show_all();
+    void config_apply_after_show_all();
+    void configureTheme();
+    void update_window_save_needed(std::string update_type = "",
+                                   bool new_machine_state = false, const CtTreeIter* give_tree_iter = nullptr) { /* todo: */ }
 
     CtTreeIter    curr_tree_iter()  { return _ctTreestore.to_ct_tree_iter(_ctTreeview.get_selection()->get_selected()); }
     CtTreeStore&  get_tree_store()  { return _ctTreestore; }
@@ -111,7 +91,12 @@ public:
     CtTextView&   get_text_view()   { return _ctTextview; }
     CtMenu&       get_ct_menu()     { return *_ctMenu; }
     CtStatusBar&  get_status_bar()  { return _ctStatusBar; }
-    bool&         user_active()     { return _userActive; }
+
+    bool&         user_active()     { return _userActive; } // use as a function, because it's easer to put breakpoint
+    int&          cursor_key_press() { return _cursorKeyPress; }
+    int&          hovering_link_iter_offset() { return _hovering_link_iter_offset; }
+
+    Glib::RefPtr<Gtk::TextBuffer> curr_buffer() { return _ctTextview.get_buffer(); }
 
 private:
     Gtk::HBox&    _initStatusBar();
@@ -124,10 +109,11 @@ public:
     void window_header_update_last_visited();
     void window_header_update_num_last_visited();
 
-    void treeview_set_colors();
     void menu_tree_update_for_bookmarked_node(bool is_bookmarked);
     void bookmark_action_select_node(gint64 node_id);
     void set_bookmarks_menu_items();
+
+    void set_menu_items_special_chars();
 
     void show_hide_toolbar(bool visible)    { _pToolbar->property_visible() = visible; }
     void show_hide_tree_view(bool visible)  { _scrolledwindowTree.property_visible() = visible; }
@@ -135,13 +121,23 @@ public:
     void set_toolbar_icon_size(int size)    { _pToolbar->property_icon_size() = CtMiscUtil::getIconSize(size); }
 
 protected:
+    bool                _onTheWindowSignalKeyPressEvent(GdkEventKey* event);
+
     void                _onTheTreeviewSignalCursorChanged();
     bool                _onTheTreeviewSignalButtonPressEvent(GdkEventButton* event);
-    bool                _onTheWindowSignalKeyPressEvent(GdkEventKey* event);
     bool                _onTheTreeviewSignalKeyPressEvent(GdkEventKey* event);
     bool                _onTheTreeviewSignalPopupMenu();
+
+    void                _onTheTextviewPopulateMenu(Gtk::Menu* menu);
+    bool                _onTheTextviewMotionNotifyEvent(GdkEventMotion* event);
+    bool                _onTheTextviewVisibilityNotifyEvent(GdkEventVisibility* event);
+    void                _onTheTextviewSizeAllocate(Gtk::Allocation& allocation);
+    bool                _onTheTextviewEvent(GdkEvent* event);
+    void                _onTheTextviewEventAfter(GdkEvent* event);
+
     void                _titleUpdate(bool saveNeeded);
 
+protected:
     Gtk::VBox           _vboxMain;
     Gtk::VBox           _vboxText;
     Gtk::HPaned         _hPaned;
@@ -151,13 +147,21 @@ protected:
     CtStatusBar         _ctStatusBar;
     CtWinHeader         _ctWinHeader;
     Gtk::MenuItem*      _pBookmarksSubmenu;
-    Gtk::Menu*          _pNodePopup;
+    Gtk::MenuItem*      _pSpecialCharsSubmenu;
     Gtk::ScrolledWindow _scrolledwindowTree;
     Gtk::ScrolledWindow _scrolledwindowText;
     CtTreeStore         _ctTreestore;
     CtTreeView          _ctTreeview;
-    CtTextView          _ctTextview;
+    CtTextView          _ctTextview; /* todo: rename? because _ctTextview and _ctTreeview look the same */
     std::string         _currFileName;
     std::string         _currFileDir;
+
+    Glib::RefPtr<Gtk::CssProvider> _css_provider_theme;
+    Glib::RefPtr<Gtk::CssProvider> _css_provider_theme_font;
+
+private:
     bool                _userActive;
+    int                 _cursorKeyPress;
+    int                 _hovering_link_iter_offset;
+    int                 _prevTextviewWidth;
 };

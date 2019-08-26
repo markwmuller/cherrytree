@@ -19,109 +19,216 @@
  * MA 02110-1301, USA.
  */
 
-#include <assert.h>
 #include <algorithm>
 #include "ct_doc_rw.h"
 #include "ct_app.h"
 #include "ct_treestore.h"
 #include "ct_misc_utils.h"
 
-CtTreeIter::CtTreeIter(Gtk::TreeIter iter, const CtTreeModelColumns* columns)
+CtTreeModelColumns::~CtTreeModelColumns()
+{
+
+}
+
+CtTreeIter::CtTreeIter(Gtk::TreeIter iter, const CtTreeModelColumns* pColumns, CtSQLite* pCtSQLite)
  : Gtk::TreeIter(iter),
-   _columns(columns)
+   _pColumns(pColumns),
+   _pCtSQLite(pCtSQLite)
 {
 }
 
 CtTreeIter CtTreeIter::parent()
 {
-    return CtTreeIter((*this)->parent(), _columns);
+    return CtTreeIter((*this)->parent(), _pColumns, _pCtSQLite);
 }
 
 CtTreeIter CtTreeIter::first_child()
 {
-    return CtTreeIter((*this)->children().begin(), _columns);
+    return CtTreeIter((*this)->children().begin(), _pColumns, _pCtSQLite);
 }
 
 bool CtTreeIter::get_node_read_only() const
 {
-    return (*this) && (*this)->get_value(_columns->colNodeRO);
+    return (*this) && (*this)->get_value(_pColumns->colNodeRO);
 }
 
 void CtTreeIter::set_node_read_only(bool val)
 {
-    (*this)->set_value(_columns->colNodeRO, val);
+    (*this)->set_value(_pColumns->colNodeRO, val);
 }
 
 gint64 CtTreeIter::get_node_id() const
 {
-    return (*this) ? (*this)->get_value(_columns->colNodeUniqueId) : -1;
+    return (*this) ? (*this)->get_value(_pColumns->colNodeUniqueId) : -1;
 }
 
 bool CtTreeIter::get_node_is_bold() const
 {
-    return (*this) && get_is_bold_from_pango_weight((*this)->get_value(_columns->colWeight));
+    return (*this) && get_is_bold_from_pango_weight((*this)->get_value(_pColumns->colWeight));
 }
 
 guint16 CtTreeIter::get_node_custom_icon_id() const
 {
-    return (*this) ? (*this)->get_value(_columns->colCustomIconId) : 0;
+    return (*this) ? (*this)->get_value(_pColumns->colCustomIconId) : 0;
 }
 
 Glib::ustring CtTreeIter::get_node_name() const
 {
-    return (*this) ? (*this)->get_value(_columns->colNodeName) : "";
+    return (*this) ? (*this)->get_value(_pColumns->colNodeName) : "";
 }
 
 void CtTreeIter::set_node_name(const Glib::ustring& node_name)
 {
-    (*this)->set_value(_columns->colNodeName, node_name);
+    (*this)->set_value(_pColumns->colNodeName, node_name);
 }
 
 Glib::ustring CtTreeIter::get_node_tags() const
 {
-    return (*this) ? (*this)->get_value(_columns->colNodeTags) : "";
+    return (*this) ? (*this)->get_value(_pColumns->colNodeTags) : "";
 }
 
 std::string CtTreeIter::get_node_foreground() const
 {
-    return (*this) ? (*this)->get_value(_columns->colForeground) : "";
+    return (*this) ? (*this)->get_value(_pColumns->colForeground) : "";
 }
 
 std::string CtTreeIter::get_node_syntax_highlighting() const
 {
-    return (*this) ? (*this)->get_value(_columns->colSyntaxHighlighting) : "";
+    return (*this) ? (*this)->get_value(_pColumns->colSyntaxHighlighting) : "";
+}
+
+bool CtTreeIter::get_node_is_rich_text() const
+{
+    return get_node_syntax_highlighting() == CtConst::RICH_TEXT_ID;
 }
 
 std::time_t CtTreeIter::get_node_creating_time() const
 {
-    return (*this) ? (*this)->get_value(_columns->colTsCreation) : 0;
+    return (*this) ? (*this)->get_value(_pColumns->colTsCreation) : 0;
 }
 
 std::time_t CtTreeIter::get_node_modification_time() const
 {
-    return (*this) ? (*this)->get_value(_columns->colTsLastSave) : 0;
+    return (*this) ? (*this)->get_value(_pColumns->colTsLastSave) : 0;
 }
 
 void CtTreeIter::set_node_aux_icon(Glib::RefPtr<Gdk::Pixbuf> rPixbuf)
 {
-    (*this)->set_value(_columns->rColPixbufAux, rPixbuf);
+    (*this)->set_value(_pColumns->rColPixbufAux, rPixbuf);
 }
 
 Glib::RefPtr<Gsv::Buffer> CtTreeIter::get_node_text_buffer() const
 {
-    return (*this) ? (*this)->get_value(_columns->rColTextBuffer) : Glib::RefPtr<Gsv::Buffer>();
+    Glib::RefPtr<Gsv::Buffer> rRetTextBuffer{nullptr};
+    if (*this)
+    {
+        rRetTextBuffer = (*this)->get_value(_pColumns->rColTextBuffer);
+        if (!rRetTextBuffer && nullptr != _pCtSQLite)
+        {
+            // SQLite text buffer not yet populated
+            std::list<CtAnchoredWidget*> anchoredWidgetList;
+            rRetTextBuffer = _pCtSQLite->getTextBuffer((*this)->get_value(_pColumns->colSyntaxHighlighting),
+                                                           anchoredWidgetList,
+                                                           (*this)->get_value(_pColumns->colNodeUniqueId));
+            (*this)->set_value(_pColumns->colAnchoredWidgets, anchoredWidgetList);
+            (*this)->set_value(_pColumns->rColTextBuffer, rRetTextBuffer);
+        }
+    }
+    return rRetTextBuffer;
 }
 
-guint16 CtTreeIter::get_pango_weight_from_is_bold(bool isBold)
+int CtTreeIter::get_pango_weight_from_is_bold(bool isBold)
 {
     return isBold ? PANGO_WEIGHT_HEAVY : PANGO_WEIGHT_NORMAL;
 }
 
-bool CtTreeIter::get_is_bold_from_pango_weight(guint16 pangoWeight)
+bool CtTreeIter::get_is_bold_from_pango_weight(int pangoWeight)
 {
     return pangoWeight == PANGO_WEIGHT_HEAVY;
 }
 
+std::list<CtAnchoredWidget*> CtTreeIter::get_all_embedded_widgets()
+{
+    return (*this) ? (*this)->get_value(_pColumns->colAnchoredWidgets) : std::list<CtAnchoredWidget*>();
+}
+
+std::list<CtAnchoredWidget*> CtTreeIter::get_embedded_pixbufs_tables_codeboxes(const std::pair<int,int>& offset_range)
+{
+    std::list<CtAnchoredWidget*> retAnchoredWidgetsList;
+    if ((*this) && (*this)->get_value(_pColumns->colAnchoredWidgets).size() > 0)
+    {
+        Glib::RefPtr<Gsv::Buffer> rTextBuffer = get_node_text_buffer();
+        Gtk::TextIter curr_iter = offset_range.first >= 0 ? rTextBuffer->get_iter_at_offset(offset_range.first) : rTextBuffer->begin();
+        do
+        {
+            if ((offset_range.second >= 0) && (curr_iter.get_offset() > offset_range.second))
+            {
+                break;
+            }
+            Glib::RefPtr<Gtk::TextChildAnchor> rChildAnchor = curr_iter.get_child_anchor();
+            if (rChildAnchor)
+            {
+                for (CtAnchoredWidget* pCtAnchoredWidget : (*this)->get_value(_pColumns->colAnchoredWidgets))
+                {
+                    if (rChildAnchor == pCtAnchoredWidget->getTextChildAnchor())
+                    {
+                        pCtAnchoredWidget->updateOffset(curr_iter.get_offset());
+                        pCtAnchoredWidget->updateJustification(CtMiscUtil::getTextIterAlignment(curr_iter));
+                        retAnchoredWidgetsList.push_back(pCtAnchoredWidget);
+                        break;
+                    }
+                }
+            }
+        }
+        while (curr_iter.forward_char());
+    }
+    return retAnchoredWidgetsList;
+}
+
+void CtTreeIter::pending_edit_db_node_prop()
+{
+    if (nullptr != _pCtSQLite)
+    {
+        const gint64 node_id = get_node_id();
+        _pCtSQLite->pending_edit_db_node_prop(node_id);
+    }
+}
+
+void CtTreeIter::pending_edit_db_node_buff()
+{
+    if (nullptr != _pCtSQLite)
+    {
+        const gint64 node_id = get_node_id();
+        _pCtSQLite->pending_edit_db_node_buff(node_id);
+    }
+}
+
+void CtTreeIter::pending_edit_db_node_hier()
+{
+    if (nullptr != _pCtSQLite)
+    {
+        const gint64 node_id = get_node_id();
+        _pCtSQLite->pending_edit_db_node_hier(node_id);
+    }
+}
+
+void CtTreeIter::pending_new_db_node()
+{
+    if (nullptr != _pCtSQLite)
+    {
+        const gint64 node_id = get_node_id();
+        _pCtSQLite->pending_new_db_node(node_id);
+    }
+}
+
+
+void CtTreeStore::pending_edit_db_bookmarks()
+{
+    if (nullptr != _pCtSQLite)
+    {
+        _pCtSQLite->pending_edit_db_bookmarks();
+    }
+}
 
 CtTreeStore::CtTreeStore()
 {
@@ -131,9 +238,9 @@ CtTreeStore::CtTreeStore()
 CtTreeStore::~CtTreeStore()
 {
     _iterDeleteAnchoredWidgets(getRootChildren());
-    if (nullptr != _pCtSQLiteRead)
+    if (nullptr != _pCtSQLite)
     {
-        delete _pCtSQLiteRead;
+        delete _pCtSQLite;
     }
 }
 
@@ -215,6 +322,29 @@ void CtTreeStore::viewAppendColumns(Gtk::TreeView* pTreeView)
     pColumns->set_expand(true);
     pTreeView->append_column(*pColumns);
     pTreeView->append_column("", _columns.rColPixbufAux);
+    Gtk::TreeViewColumn* pTVCol0 = pTreeView->get_column(0);
+    std::vector<Gtk::CellRenderer*> cellRenderers0 = pTVCol0->get_cells();
+    if (cellRenderers0.size() > 1)
+    {
+        Gtk::CellRendererText *pCellRendererText = dynamic_cast<Gtk::CellRendererText*>(cellRenderers0[1]);
+        if (nullptr != pCellRendererText)
+        {
+            pTVCol0->add_attribute(pCellRendererText->property_weight(), _columns.colWeight);
+            pTVCol0->set_cell_data_func(*pCellRendererText,
+                [this](Gtk::CellRenderer* pCell, const Gtk::TreeIter& treeIter)
+                {
+                    Gtk::TreeRow row = *treeIter;
+                    if (row.get_value(_columns.colForeground).empty())
+                    {
+                        dynamic_cast<Gtk::CellRendererText*>(pCell)->property_foreground() = CtApp::P_ctCfg->ttDefFg;
+                    }
+                    else
+                    {
+                        dynamic_cast<Gtk::CellRendererText*>(pCell)->property_foreground() = row.get_value(_columns.colForeground);
+                    }
+                });
+        }
+    }
 }
 
 bool CtTreeStore::readNodesFromFilepath(const char* filepath, const bool isImport, const Gtk::TreeIter* pParentIter)
@@ -224,26 +354,33 @@ bool CtTreeStore::readNodesFromFilepath(const char* filepath, const bool isImpor
     CtDocRead* pCtDocRead{nullptr};
     if (CtDocType::XML == docType)
     {
-        pCtDocRead = new CtXmlRead(filepath, nullptr);
+        CtXmlRead* pCtXmlRead = new CtXmlRead(filepath, nullptr);
+        if (pCtXmlRead && (nullptr != pCtXmlRead->get_document()))
+        {
+            pCtDocRead = pCtXmlRead;
+        }
     }
     else if (CtDocType::SQLite == docType)
     {
-        pCtDocRead = new CtSQLiteRead(filepath);
+        CtSQLite* pCtSQLite = new CtSQLite(filepath);
+        if (pCtSQLite && pCtSQLite->getDbOpenOk())
+        {
+            pCtDocRead = pCtSQLite;
+        }
     }
     if (pCtDocRead != nullptr)
     {
         pCtDocRead->signalAddBookmark.connect(sigc::mem_fun(this, &CtTreeStore::onRequestAddBookmark));
         pCtDocRead->signalAppendNode.connect(sigc::mem_fun(this, &CtTreeStore::onRequestAppendNode));
-        pCtDocRead->treeWalk(pParentIter);
+        retOk = pCtDocRead->read_populate_tree(pParentIter);
         if (!isImport && (CtDocType::SQLite == docType))
         {
-            _pCtSQLiteRead = dynamic_cast<CtSQLiteRead*>(pCtDocRead);
+            _pCtSQLite = dynamic_cast<CtSQLite*>(pCtDocRead);
         }
         else
         {
             delete pCtDocRead;
         }
-        retOk = true;
     }
     return retOk;
 }
@@ -255,7 +392,7 @@ Glib::RefPtr<Gdk::Pixbuf> CtTreeStore::_getNodeIcon(int nodeDepth, const std::st
     if (0 != customIconId)
     {
         // customIconId
-        rPixbuf = CtApp::R_icontheme->load_icon(CtConst::NODES_STOCKS.at(customIconId), CtConst::NODE_ICON_SIZE);
+        rPixbuf = CtApp::R_icontheme->load_icon(CtConst::NODES_STOCKS.at((int)customIconId), CtConst::NODE_ICON_SIZE);
     }
     else if (CtConst::NODE_ICON_TYPE_NONE == CtApp::P_ctCfg->nodesIcons)
     {
@@ -296,7 +433,7 @@ void CtTreeStore::getNodeData(Gtk::TreeIter treeIter, CtNodeData& nodeData)
 
     nodeData.name =  row[_columns.colNodeName];
     nodeData.rTextBuffer = row[_columns.rColTextBuffer];
-    nodeData.nodeId = nodeData.nodeId = row[_columns.colNodeUniqueId];
+    nodeData.nodeId = row[_columns.colNodeUniqueId];
     nodeData.syntax = row[_columns.colSyntaxHighlighting];
     //row[_columns.colNodeSequence] = ;
     nodeData.tags = row[_columns.colNodeTags];
@@ -322,7 +459,7 @@ void CtTreeStore::updateNodeData(Gtk::TreeIter treeIter, const CtNodeData& nodeD
     row[_columns.colNodeTags] = nodeData.tags;
     row[_columns.colNodeRO] = nodeData.isRO;
     //row[_columns.rColPixbufAux] = ;
-    row[_columns.colCustomIconId] = nodeData.customIconId;
+    row[_columns.colCustomIconId] = (guint16)nodeData.customIconId;
     row[_columns.colWeight] = CtTreeIter::get_pango_weight_from_is_bold(nodeData.isBold);
     row[_columns.colForeground] = nodeData.foregroundRgb24;
     row[_columns.colTsCreation] = nodeData.tsCreation;
@@ -400,24 +537,11 @@ Gtk::TreeIter CtTreeStore::onRequestAppendNode(CtNodeData* pNodeData, const Gtk:
 
 Glib::RefPtr<Gsv::Buffer> CtTreeStore::_getNodeTextBuffer(const Gtk::TreeIter& treeIter)
 {
-    Glib::RefPtr<Gsv::Buffer> rRetTextBuffer{nullptr};
     if (treeIter)
     {
-        Gtk::TreeRow treeRow = *treeIter;
-        rRetTextBuffer = treeRow.get_value(_columns.rColTextBuffer);
-        if (!rRetTextBuffer)
-        {
-            // SQLite text buffer not yet populated
-            assert(nullptr != _pCtSQLiteRead);
-            std::list<CtAnchoredWidget*> anchoredWidgetList = treeRow.get_value(_columns.colAnchoredWidgets);
-            rRetTextBuffer = _pCtSQLiteRead->getTextBuffer(treeRow.get_value(_columns.colSyntaxHighlighting),
-                                                           anchoredWidgetList,
-                                                           treeRow.get_value(_columns.colNodeUniqueId));
-            treeRow.set_value(_columns.colAnchoredWidgets, anchoredWidgetList);
-            treeRow.set_value(_columns.rColTextBuffer, rRetTextBuffer);
-        }
+        return to_ct_tree_iter(treeIter).get_node_text_buffer();
     }
-    return rRetTextBuffer;
+    return Glib::RefPtr<Gsv::Buffer>();
 }
 
 void CtTreeStore::applyTextBufferToCtTextView(const Gtk::TreeIter& treeIter, CtTextView* pTextView)
@@ -427,19 +551,23 @@ void CtTreeStore::applyTextBufferToCtTextView(const Gtk::TreeIter& treeIter, CtT
         std::cerr << "!! treeIter" << std::endl;
         return;
     }
-    Gtk::TreeRow treeRow = *treeIter;
-    std::cout << treeRow.get_value(_columns.colNodeName) << std::endl;
+    CtTreeIter node = to_ct_tree_iter(treeIter);
+    std::cout << node.get_node_name() << std::endl;
+
     Glib::RefPtr<Gsv::Buffer> rTextBuffer = _getNodeTextBuffer(treeIter);
-    pTextView->setupForSyntax(treeRow.get_value(_columns.colSyntaxHighlighting));
+    pTextView->setupForSyntax(node.get_node_syntax_highlighting());
     pTextView->set_buffer(rTextBuffer);
-    for (CtAnchoredWidget* pCtAnchoredWidget : treeRow.get_value(_columns.colAnchoredWidgets))
+    pTextView->set_sensitive(true);
+    pTextView->set_editable(!node.get_node_read_only());
+
+    for (CtAnchoredWidget* pCtAnchoredWidget : node.get_all_embedded_widgets())
     {
         Glib::RefPtr<Gtk::TextChildAnchor> rChildAnchor = pCtAnchoredWidget->getTextChildAnchor();
         if (rChildAnchor)
         {
             if (0 == rChildAnchor->get_widgets().size())
             {
-                Gtk::TextIter textIter = rTextBuffer->get_iter_at_child_anchor(rChildAnchor);
+                // Gtk::TextIter textIter = rTextBuffer->get_iter_at_child_anchor(rChildAnchor);
                 pTextView->add_child_at_anchor(*pCtAnchoredWidget, rChildAnchor);
                 pCtAnchoredWidget->applyWidthHeight(pTextView->get_allocation().get_width());
             }
@@ -458,19 +586,80 @@ void CtTreeStore::applyTextBufferToCtTextView(const Gtk::TreeIter& treeIter, CtT
     pTextView->grab_focus();
 }
 
-gint64 CtTreeStore::node_id_get()
+void CtTreeStore::addAnchoredWidgets(Gtk::TreeIter treeIter, std::list<CtAnchoredWidget*> anchoredWidgetList, Gtk::TextView* pTextView)
 {
-    // todo: this function works differently from python code
-    // it's easer to find max than check every id is not used through all tree
-    gint64 max_id = 0;
-    _rTreeStore->foreach(
-        [&max_id, this](const Gtk::TreeModel::Path&, const Gtk::TreeIter& iter)->bool
+    auto widgets = treeIter->get_value(_columns.colAnchoredWidgets);
+    for (auto new_widget: anchoredWidgetList)
+        widgets.push_back(new_widget);
+    treeIter->set_value(_columns.colAnchoredWidgets, widgets);
+
+    for (CtAnchoredWidget* pCtAnchoredWidget : anchoredWidgetList)
+    {
+        Glib::RefPtr<Gtk::TextChildAnchor> rChildAnchor = pCtAnchoredWidget->getTextChildAnchor();
+        if (rChildAnchor)
         {
-            max_id = std::max(max_id, iter->get_value(_columns.colNodeUniqueId));
-            return false;
+            if (0 == rChildAnchor->get_widgets().size())
+            {
+                pTextView->add_child_at_anchor(*pCtAnchoredWidget, rChildAnchor);
+                pCtAnchoredWidget->applyWidthHeight(pTextView->get_allocation().get_width());
+            }
         }
-    );
-    return max_id+1;
+    }
+}
+
+gint64 CtTreeStore::node_id_get(gint64 original_id, std::unordered_map<gint64,gint64> remapping_ids)
+{
+    // check if remapping was set
+    if ((original_id > 0) && (1 == remapping_ids.count(original_id)))
+    {
+        return remapping_ids[original_id];
+    }
+
+    // prepare sets of ids not to be used
+    std::set<gint64> allocated_for_remapping_ids;
+    for (const auto& curr_pair : remapping_ids)
+    {
+        allocated_for_remapping_ids.insert(curr_pair.second);
+    }
+    std::set<gint64> nodes_pending_rm;
+    if (nullptr != _pCtSQLite)
+    {
+        nodes_pending_rm = _pCtSQLite->get_nodes_pending_rm();
+    }
+    // (@txe) this function works differently from python code
+    // it's easer to find max than check every id is not used through all tree
+    gint64 max_node_id{0};
+    _rTreeStore->foreach_iter([&max_node_id, this](const Gtk::TreeIter& iter)
+    {
+        if (iter->get_value(_columns.colNodeUniqueId) > max_node_id)
+        {
+            max_node_id = iter->get_value(_columns.colNodeUniqueId);
+        }
+        return false; /* continue */
+    });
+    for (const gint64 curr_id : allocated_for_remapping_ids)
+    {
+        if (curr_id > max_node_id)
+        {
+            max_node_id = curr_id;
+        }
+    }
+    for (const gint64 curr_id : nodes_pending_rm)
+    {
+        if (curr_id > max_node_id)
+        {
+            max_node_id = curr_id;
+        }
+    }
+    const gint64 new_node_id = max_node_id+1;
+
+    // remapping set up
+    if (original_id > 0)
+    {
+        remapping_ids[original_id] = new_node_id;
+    }
+
+    return new_node_id;
 }
 
 void CtTreeStore::add_used_tags(const std::string& tags)
@@ -484,17 +673,17 @@ void CtTreeStore::add_used_tags(const std::string& tags)
     }
 }
 
-bool CtTreeStore::is_node_bookmarked(const gint64& node_id)
+bool CtTreeStore::is_node_bookmarked(const gint64 node_id)
 {
     return vec::exists(_bookmarks, node_id);
 }
 
-std::string CtTreeStore::get_node_name_from_node_id(const gint64& node_id)
+std::string CtTreeStore::get_node_name_from_node_id(const gint64 node_id)
 {
     return _nodes_names_dict.at(node_id);
 }
 
-CtTreeIter CtTreeStore::get_tree_iter_from_node_id(const gint64& node_id)
+CtTreeIter CtTreeStore::get_node_from_node_id(const gint64 node_id)
 {
     Gtk::TreeIter find_iter;
     _rTreeStore->foreach_iter([&node_id, &find_iter, this](const Gtk::TreeIter& iter) {
@@ -505,6 +694,17 @@ CtTreeIter CtTreeStore::get_tree_iter_from_node_id(const gint64& node_id)
     return to_ct_tree_iter(find_iter);
 }
 
+CtTreeIter CtTreeStore::get_node_from_node_name(const Glib::ustring& node_name)
+{
+    Gtk::TreeIter find_iter;
+    _rTreeStore->foreach_iter([&node_name, &find_iter, this](const Gtk::TreeIter& iter) {
+        if (iter->get_value(_columns.colNodeName) != node_name) return false; /* continue */
+        find_iter = iter;
+        return true;
+    });
+    return to_ct_tree_iter(find_iter);
+
+}
 const std::list<gint64>& CtTreeStore::get_bookmarks()
 {
     return _bookmarks;
@@ -570,6 +770,11 @@ Gtk::TreeIter CtTreeStore::get_iter_first()
     return _rTreeStore->get_iter("0");
 }
 
+CtTreeIter CtTreeStore::get_ct_iter_first()
+{
+    return to_ct_tree_iter(get_iter_first());
+}
+
 Gtk::TreeIter CtTreeStore::get_tree_iter_last_sibling(const Gtk::TreeNodeChildren& children)
 {
     if (children.empty()) return Gtk::TreeIter();
@@ -588,5 +793,5 @@ Gtk::TreePath CtTreeStore::get_path(Gtk::TreeIter tree_iter)
 
 CtTreeIter CtTreeStore::to_ct_tree_iter(Gtk::TreeIter tree_iter)
 {
-    return CtTreeIter(tree_iter, &get_columns());
+    return CtTreeIter(tree_iter, &get_columns(), _pCtSQLite);
 }

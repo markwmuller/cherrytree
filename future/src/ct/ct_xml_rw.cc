@@ -20,7 +20,6 @@
  */
 
 #include <iostream>
-#include <assert.h>
 #include "ct_doc_rw.h"
 #include "ct_misc_utils.h"
 #include "ct_const.h"
@@ -45,27 +44,37 @@ CtXmlRead::~CtXmlRead()
 {
 }
 
-void CtXmlRead::treeWalk(const Gtk::TreeIter* pParentIter)
+bool CtXmlRead::read_populate_tree(const Gtk::TreeIter* pParentIter)
 {
     xmlpp::Document* pDocument = get_document();
-    assert(nullptr != pDocument);
-    xmlpp::Element* pRoot = pDocument->get_root_node();
-    assert(CtConst::APP_NAME == pRoot->get_name());
-    for (xmlpp::Node* pNode : pRoot->get_children())
+    bool retVal = (nullptr != pDocument);
+    if (retVal)
     {
-        if ("node" == pNode->get_name())
+        xmlpp::Element* pRoot = pDocument->get_root_node();
+        if (CtConst::APP_NAME == pRoot->get_name())
         {
-            _xmlTreeWalkIter(static_cast<xmlpp::Element*>(pNode), pParentIter);
-        }
-        else if ("bookmarks" == pNode->get_name())
-        {
-            Glib::ustring bookmarks_csv = static_cast<xmlpp::Element*>(pNode)->get_attribute_value("list");
-            for (gint64& nodeId : CtStrUtil::gstringSplit2int64(bookmarks_csv.c_str(), ","))
+            // load bookmarks before node to update bookmark icon
+            for (xmlpp::Node* pNode : pRoot->get_children("bookmarks"))
             {
-                signalAddBookmark.emit(nodeId);
+                Glib::ustring bookmarks_csv = static_cast<xmlpp::Element*>(pNode)->get_attribute_value("list");
+                for (gint64& nodeId : CtStrUtil::gstringSplit2int64(bookmarks_csv.c_str(), ","))
+                {
+                    signalAddBookmark.emit(nodeId);
+                }
+            }
+
+            for (xmlpp::Node* pNode : pRoot->get_children("node"))
+            {
+                _xmlTreeWalkIter(static_cast<xmlpp::Element*>(pNode), pParentIter);
             }
         }
+        else
+        {
+            std::cerr << "!! xml root node: " << pRoot->get_name() << std::endl;
+            retVal = false;
+        }
     }
+    return retVal;
 }
 
 void CtXmlRead::_xmlTreeWalkIter(xmlpp::Element* pNodeElement, const Gtk::TreeIter* pParentIter)
@@ -88,9 +97,9 @@ Gtk::TreeIter CtXmlRead::_xmlNodeProcess(xmlpp::Element* pNodeElement, const Gtk
     nodeData.name = pNodeElement->get_attribute_value("name");
     nodeData.syntax = pNodeElement->get_attribute_value("prog_lang");
     nodeData.tags = pNodeElement->get_attribute_value("tags");
-    nodeData.isRO = Glib::str_has_prefix(pNodeElement->get_attribute_value("readonly"), "T");
-    nodeData.customIconId = CtStrUtil::gint64FromGstring(pNodeElement->get_attribute_value("custom_icon_id").c_str());
-    nodeData.isBold = Glib::str_has_prefix(pNodeElement->get_attribute_value("is_bold"), "T");
+    nodeData.isRO = CtStrUtil::isStrTrue(pNodeElement->get_attribute_value("readonly"));
+    nodeData.customIconId = (guint32)CtStrUtil::gint64FromGstring(pNodeElement->get_attribute_value("custom_icon_id").c_str());
+    nodeData.isBold = CtStrUtil::isStrTrue(pNodeElement->get_attribute_value("is_bold"));
     nodeData.foregroundRgb24 = pNodeElement->get_attribute_value("foreground");
     nodeData.tsCreation = CtStrUtil::gint64FromGstring(pNodeElement->get_attribute_value("ts_creation").c_str());
     nodeData.tsLastSave = CtStrUtil::gint64FromGstring(pNodeElement->get_attribute_value("ts_lastSave").c_str());
@@ -122,9 +131,9 @@ CtXmlNodeType CtXmlRead::_xmlNodeGetTypeFromName(const Glib::ustring& xmlNodeNam
     return retXmlNodeType;
 }
 
-void CtXmlRead::_getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer,
-                                   std::list<CtAnchoredWidget*>& anchoredWidgets,
-                                   xmlpp::Node* pNodeParent)
+void CtXmlRead::getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer, Gtk::TextIter* insertIter,
+                                  std::list<CtAnchoredWidget*>& anchoredWidgets,
+                                  xmlpp::Node* pNodeParent, int forceCharOffset /*=-1*/)
 {
     CtXmlNodeType xmlNodeType = _xmlNodeGetTypeFromName(pNodeParent->get_name());
     if (CtXmlNodeType::RichText == xmlNodeType)
@@ -146,13 +155,14 @@ void CtXmlRead::_getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer,
                         tagsNames.push_back(tagName);
                     }
                 }
+                Gtk::TextIter iter = insertIter ? *insertIter : rTextBuffer->end();
                 if (tagsNames.size() > 0)
                 {
-                    rTextBuffer->insert_with_tags_by_name(rTextBuffer->end(), textContent, tagsNames);
+                    rTextBuffer->insert_with_tags_by_name(iter, textContent, tagsNames);
                 }
                 else
                 {
-                    rTextBuffer->insert(rTextBuffer->end(), textContent);
+                    rTextBuffer->insert(iter, textContent);
                 }
             }
         }
@@ -160,7 +170,7 @@ void CtXmlRead::_getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer,
     else if (CtXmlNodeType::None != xmlNodeType)
     {
         xmlpp::Element* pNodeElement = static_cast<xmlpp::Element*>(pNodeParent);
-        const int charOffset = std::stoi(pNodeElement->get_attribute_value("char_offset"));
+        const int charOffset = forceCharOffset != -1 ? forceCharOffset : std::stoi(pNodeElement->get_attribute_value("char_offset"));
         Glib::ustring justification = pNodeElement->get_attribute_value(CtConst::TAG_JUSTIFICATION);
         if (justification.empty())
         {
@@ -202,8 +212,8 @@ void CtXmlRead::_getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer,
             const int colMin = std::stoi(pNodeElement->get_attribute_value("col_min"));
             const int colMax = std::stoi(pNodeElement->get_attribute_value("col_max"));
             CtTableMatrix tableMatrix;
-            populateTableMatrix(tableMatrix, pNodeElement);
-            pAnchoredWidget = new CtTable(tableMatrix, colMin, colMax, charOffset, justification);
+            const bool isHeadFront = populateTableMatrixGetIsHeadFront(tableMatrix, pNodeElement);
+            pAnchoredWidget = new CtTable(tableMatrix, colMin, colMax, isHeadFront, charOffset, justification);
         }
         else if (CtXmlNodeType::CodeBox == xmlNodeType)
         {
@@ -235,14 +245,8 @@ void CtXmlRead::_getTextBufferIter(Glib::RefPtr<Gsv::Buffer>& rTextBuffer,
     }
 }
 
-void CtXmlRead::populateTableMatrix(CtTableMatrix& tableMatrix, xmlpp::Element* pNodeElement)
+bool CtXmlRead::populateTableMatrixGetIsHeadFront(CtTableMatrix& tableMatrix, xmlpp::Element* pNodeElement)
 {
-    if (nullptr == pNodeElement)
-    {
-        xmlpp::Document *pDocument = get_document();
-        assert(nullptr != pDocument);
-        pNodeElement = pDocument->get_root_node();
-    }
     for (xmlpp::Node* pNodeRow : pNodeElement->get_children())
     {
         if ("row" == pNodeRow->get_name())
@@ -259,6 +263,7 @@ void CtXmlRead::populateTableMatrix(CtTableMatrix& tableMatrix, xmlpp::Element* 
             }
         }
     }
+    return !pNodeElement->get_attribute_value("head_front").empty();
 }
 
 Glib::RefPtr<Gsv::Buffer> CtXmlRead::getTextBuffer(const std::string& syntax,
@@ -269,27 +274,42 @@ Glib::RefPtr<Gsv::Buffer> CtXmlRead::getTextBuffer(const std::string& syntax,
     if (nullptr == pNodeElement)
     {
         xmlpp::Document *pDocument = get_document();
-        assert(nullptr != pDocument);
-        pNodeElement = pDocument->get_root_node();
+        if (nullptr != pDocument)
+        {
+            pNodeElement = pDocument->get_root_node();
+        }
     }
-    rRetTextBuffer->begin_not_undoable_action();
-    for (xmlpp::Node* pNode : pNodeElement->get_children())
+    if (nullptr != pNodeElement)
     {
-        _getTextBufferIter(rRetTextBuffer, anchoredWidgets, pNode);
+        rRetTextBuffer->begin_not_undoable_action();
+        for (xmlpp::Node* pNode : pNodeElement->get_children())
+        {
+            getTextBufferIter(rRetTextBuffer, nullptr, anchoredWidgets, pNode);
+        }
+        rRetTextBuffer->end_not_undoable_action();
+        rRetTextBuffer->set_modified(false);
     }
-    rRetTextBuffer->end_not_undoable_action();
-    rRetTextBuffer->set_modified(false);
     return rRetTextBuffer;
 }
 
 
-CtXmlWrite::CtXmlWrite(const char* filepath)
+CtXmlWrite::CtXmlWrite(const char* root_name)
 {
-    create_root_node(CtConst::APP_NAME);
+    create_root_node(root_name);
 }
 
 CtXmlWrite::~CtXmlWrite()
 {
+}
+
+void CtXmlWrite::treestore_to_dom(const std::list<gint64>& bookmarks, CtTreeIter ct_tree_iter)
+{
+    append_bookmarks(bookmarks);
+    while (ct_tree_iter)
+    {
+        append_dom_node(ct_tree_iter, nullptr/*p_node_parent*/, true/*to_disk*/, false/*skip_children*/);
+        ct_tree_iter++;
+    }
 }
 
 void CtXmlWrite::append_bookmarks(const std::list<gint64>& bookmarks)
@@ -298,6 +318,56 @@ void CtXmlWrite::append_bookmarks(const std::list<gint64>& bookmarks)
     Glib::ustring rejoined;
     str::join_numbers(bookmarks, rejoined, ",");
     p_bookmarks_node->set_attribute("list", rejoined);
+}
+
+void CtXmlWrite::append_node_buffer(CtTreeIter& ct_tree_iter,
+                                    xmlpp::Element* p_node_node,
+                                    bool serialise_anchored_widgets,
+                                    const std::pair<int,int>& offset_range)
+{
+    Glib::RefPtr<Gsv::Buffer> rTextBuffer = ct_tree_iter.get_node_text_buffer();
+    Gtk::TextIter curr_start_iter = offset_range.first >= 0 ? rTextBuffer->get_iter_at_offset(offset_range.first) : rTextBuffer->begin();
+    const Gtk::TextIter end_iter = offset_range.second >= 0 ? rTextBuffer->get_iter_at_offset(offset_range.second) : rTextBuffer->end();
+
+    std::map<const gchar*, std::string> curr_attributes;
+    if (ct_tree_iter.get_node_is_rich_text())
+    {
+        Gtk::TextIter curr_end_iter{curr_start_iter};
+        CtTextIterUtil::rich_text_attributes_update(curr_end_iter, curr_attributes);
+        while (curr_end_iter.forward_to_tag_toggle(Glib::RefPtr<Gtk::TextTag>{nullptr}))
+        {
+            if (!CtTextIterUtil::tag_richtext_toggling_on_or_off(curr_end_iter))
+            {
+                if (!curr_end_iter.forward_char())
+                {
+                    break;
+                }
+                continue;
+            }
+            rich_txt_serialize(p_node_node, curr_start_iter, curr_end_iter, curr_attributes);
+            if (curr_end_iter.compare(end_iter) >= 0)
+            {
+                break;
+            }
+            CtTextIterUtil::rich_text_attributes_update(curr_end_iter, curr_attributes);
+            curr_start_iter.set_offset(curr_end_iter.get_offset());
+        }
+        if (curr_start_iter.compare(end_iter) < 0)
+        {
+            rich_txt_serialize(p_node_node, curr_start_iter, end_iter, curr_attributes);
+        }
+        if (serialise_anchored_widgets)
+        {
+            for (CtAnchoredWidget* pAnchoredWidget : ct_tree_iter.get_embedded_pixbufs_tables_codeboxes(offset_range))
+            {
+                pAnchoredWidget->to_xml(p_node_node, offset_range.first >= 0 ? -offset_range.first : 0);
+            }
+        }
+    }
+    else
+    {
+        rich_txt_serialize(p_node_node, curr_start_iter, end_iter, curr_attributes);
+    }
 }
 
 void CtXmlWrite::append_dom_node(CtTreeIter& ct_tree_iter,
@@ -322,42 +392,7 @@ void CtXmlWrite::append_dom_node(CtTreeIter& ct_tree_iter,
     p_node_node->set_attribute("ts_creation", std::to_string(ct_tree_iter.get_node_creating_time()));
     p_node_node->set_attribute("ts_lastsave", std::to_string(ct_tree_iter.get_node_modification_time()));
 
-    Glib::RefPtr<Gsv::Buffer> rTextBuffer = ct_tree_iter.get_node_text_buffer();
-    Gtk::TextIter start_iter = offset_range.first >= 0 ? rTextBuffer->get_iter_at_offset(offset_range.first) : rTextBuffer->begin();
-    Gtk::TextIter end_iter = offset_range.second >= 0 ? rTextBuffer->get_iter_at_offset(offset_range.second) : rTextBuffer->end();
-
-    std::map<const gchar*, std::string> curr_attributes;
-    if (CtConst::RICH_TEXT_ID == ct_tree_iter.get_node_syntax_highlighting())
-    {
-        Gtk::TextIter curr_iter{start_iter};
-        CtTextIterUtil::rich_text_attributes_update(curr_iter, curr_attributes);
-        while (curr_iter.forward_to_tag_toggle(Glib::RefPtr<Gtk::TextTag>{nullptr}))
-        {
-            if (!CtTextIterUtil::tag_richtext_toggling_on_or_off(curr_iter))
-            {
-                if (!curr_iter.forward_char())
-                {
-                    break;
-                }
-                continue;
-            }
-            _rich_txt_serialize(p_node_node, start_iter, curr_iter, curr_attributes);
-            if (curr_iter.compare(end_iter) >= 0)
-            {
-                break;
-            }
-            CtTextIterUtil::rich_text_attributes_update(curr_iter, curr_attributes);
-            start_iter.set_offset(curr_iter.get_offset());
-        }
-        if (curr_iter.compare(end_iter) < 0)
-        {
-            _rich_txt_serialize(p_node_node, start_iter, curr_iter, curr_attributes);
-        }
-    }
-    else
-    {
-        _rich_txt_serialize(p_node_node, start_iter, end_iter, curr_attributes);
-    }
+    append_node_buffer(ct_tree_iter, p_node_node, to_disk, offset_range);
 
     if (!skip_children)
     {
@@ -370,27 +405,26 @@ void CtXmlWrite::append_dom_node(CtTreeIter& ct_tree_iter,
     }
 }
 
-void CtXmlWrite::_rich_txt_serialize(xmlpp::Element* p_node_parent,
-                                     Gtk::TextIter start_iter,
-                                     Gtk::TextIter end_iter,
-                                     std::map<const gchar*, std::string>& curr_attributes,
-                                     const gchar change_case)
+void CtXmlWrite::rich_txt_serialize(xmlpp::Element* p_node_parent,
+                                    Gtk::TextIter start_iter,
+                                    Gtk::TextIter end_iter,
+                                    std::map<const gchar*, std::string>& curr_attributes,
+                                    const gchar change_case)
 {
     xmlpp::Element* p_rich_text_node = p_node_parent->add_child("rich_text");
     for (const auto& map_iter : curr_attributes)
     {
-        p_rich_text_node->set_attribute(map_iter.first, map_iter.second);
+        if (!map_iter.second.empty())
+        {
+            p_rich_text_node->set_attribute(map_iter.first, map_iter.second);
+        }
     }
     Glib::ustring slot_text = start_iter.get_text(end_iter);
     if ('n' != change_case)
     {
         if ('l' == change_case) slot_text = slot_text.lowercase();
         else if ('u' == change_case) slot_text = slot_text.uppercase();
-        else if (('t' == change_case) && (slot_text.size() > 0))
-        {
-            if (std::isupper(slot_text.at(0))) slot_text = slot_text.lowercase();
-            else slot_text = slot_text.uppercase();
-        }
+        else if ('t' == change_case) slot_text = str::swapcase(slot_text);
     }
-    xmlpp::TextNode* p_text_node = p_rich_text_node->add_child_text(slot_text);
+    p_rich_text_node->add_child_text(slot_text);
 }

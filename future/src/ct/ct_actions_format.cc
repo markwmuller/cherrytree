@@ -22,15 +22,11 @@
 #include "ct_actions.h"
 #include <gtkmm/dialog.h>
 #include <gtkmm/stock.h>
-#include <glibmm/regex.h>
 #include <glibmm/base64.h>
 #include "ct_dialogs.h"
 #include "ct_list.h"
 #include <optional>
 
-namespace  {
-    ct_dialogs::CtLinkEntry glb_link_entry;
-}
 
 // The Iterate Tagging Button was Pressed
 void CtActions::apply_tag_latest()
@@ -48,7 +44,7 @@ void CtActions::remove_text_formatting()
     if (!_is_there_selected_node_or_error()) return;
     if (!_is_curr_node_not_syntax_highlighting_or_error()) return;
     auto curr_buffer = _pCtMainWin->get_text_view().get_buffer();
-    if (!curr_buffer->get_has_selection() && !_apply_tag_try_automatic_bounds(curr_buffer, curr_buffer->get_insert()->get_iter())) {
+    if (!curr_buffer->get_has_selection() && !CtTextIterUtil::apply_tag_try_automatic_bounds(curr_buffer, curr_buffer->get_insert()->get_iter())) {
         ct_dialogs::warning_dialog(_("No Text is Selected"), *_pCtMainWin);
         return;
     }
@@ -164,7 +160,7 @@ void CtActions::list_bulleted_handler()
     text_view_n_buffer_codebox_proof proof = _get_text_view_n_buffer_codebox_proof();
     if (!proof.text_buffer) return;
     if (proof.from_codebox || _is_curr_node_not_syntax_highlighting_or_error(true))
-        CtList(curr_buffer()).list_handler(CtListInfo::BULLET, proof.text_buffer);
+        CtList(proof.text_buffer).list_handler(CtListType::Bullet);
 }
 
 // Handler of the Numbered List
@@ -174,7 +170,7 @@ void CtActions::list_numbered_handler()
     text_view_n_buffer_codebox_proof proof = _get_text_view_n_buffer_codebox_proof();
     if (!proof.text_buffer) return;
     if (proof.from_codebox || _is_curr_node_not_syntax_highlighting_or_error(true))
-        CtList(curr_buffer()).list_handler(CtListInfo::NUMBER, proof.text_buffer);
+        CtList(proof.text_buffer).list_handler(CtListType::Number);
 }
 
 // Handler of the ToDo List
@@ -184,7 +180,7 @@ void CtActions::list_todo_handler()
     text_view_n_buffer_codebox_proof proof = _get_text_view_n_buffer_codebox_proof();
     if (!proof.text_buffer) return;
     if (proof.from_codebox || _is_curr_node_not_syntax_highlighting_or_error(true))
-        CtList(curr_buffer()).list_handler(CtListInfo::TODO, proof.text_buffer);
+        CtList(proof.text_buffer).list_handler(CtListType::Todo);
 }
 
 // The Justify Left Button was Pressed
@@ -237,17 +233,17 @@ void CtActions::_apply_tag(const Glib::ustring& tag_property, Glib::ustring prop
         if (tag_property != CtConst::TAG_JUSTIFICATION) {
             if (!_is_there_selected_node_or_error()) return;
             if (tag_property == CtConst::TAG_LINK)
-                glb_link_entry = ct_dialogs::CtLinkEntry(); // resent data
+                _link_entry = ct_dialogs::CtLinkEntry(); // reset
             if (!text_buffer->get_has_selection()) {
                 if (tag_property != CtConst::TAG_LINK) {
-                    if (!_apply_tag_try_automatic_bounds(text_buffer, text_buffer->get_insert()->get_iter())) {
+                    if (!CtTextIterUtil::apply_tag_try_automatic_bounds(text_buffer, text_buffer->get_insert()->get_iter())) {
                         ct_dialogs::warning_dialog(_("No Text is Selected"), *_pCtMainWin);
                         return;
                     }
                 } else {
                     Glib::ustring tag_property_value = _link_check_around_cursor();
                     if (tag_property_value == "") {
-                        if (!_apply_tag_try_automatic_bounds(text_buffer, text_buffer->get_insert()->get_iter())) {
+                        if (!CtTextIterUtil::apply_tag_try_automatic_bounds(text_buffer, text_buffer->get_insert()->get_iter())) {
                             Glib::ustring link_name = ct_dialogs::img_n_entry_dialog(*_pCtMainWin, _("Link Name"), "", "link_handle");
                             if (link_name.empty()) return;
                             int start_offset = text_buffer->get_insert()->get_iter().get_offset();
@@ -255,9 +251,9 @@ void CtActions::_apply_tag(const Glib::ustring& tag_property, Glib::ustring prop
                             int end_offset = text_buffer->get_insert()->get_iter().get_offset();
                             text_buffer->select_range(text_buffer->get_iter_at_offset(start_offset), text_buffer->get_iter_at_offset(end_offset));
                         }
-                        glb_link_entry.type = CtConst::LINK_TYPE_WEBS; // default value
+                        _link_entry.type = CtConst::LINK_TYPE_WEBS; // default value
                     } else {
-                        if (!_links_entries_pre_dialog(tag_property_value, glb_link_entry))
+                        if (!_links_entries_pre_dialog(tag_property_value, _link_entry))
                             return;
                     }
                 }
@@ -271,25 +267,26 @@ void CtActions::_apply_tag(const Glib::ustring& tag_property, Glib::ustring prop
     if (property_value.empty()) {
         if (tag_property == CtConst::TAG_LINK) {
             if (CtTextIterUtil::get_next_chars_from_iter_are(*iter_sel_start, CtConst::WEB_LINK_STARTERS)) {
-                glb_link_entry.type = CtConst::LINK_TYPE_WEBS;
-                glb_link_entry.webs = text_buffer->get_text(*iter_sel_start, *iter_sel_end);
+                _link_entry.type = CtConst::LINK_TYPE_WEBS;
+                _link_entry.webs = text_buffer->get_text(*iter_sel_start, *iter_sel_end);
             }
             int insert_offset = iter_sel_start->get_offset();
             int bound_offset = iter_sel_end->get_offset();
             Gtk::TreeIter sel_tree_iter;
-            if (glb_link_entry.node_id != -1)
-                sel_tree_iter = _pCtTreestore->get_tree_iter_from_node_id(glb_link_entry.node_id);
-            if (!ct_dialogs::link_handle_dialog(*_pCtMainWin, _("Insert/Edit Link"), sel_tree_iter, glb_link_entry))
+            if (_link_entry.node_id != -1)
+                sel_tree_iter = _pCtTreestore->get_node_from_node_id(_link_entry.node_id);
+            if (!ct_dialogs::link_handle_dialog(*_pCtMainWin, _("Insert/Edit Link"), sel_tree_iter, _link_entry))
                 return;
             iter_sel_start = text_buffer->get_iter_at_offset(insert_offset);
             iter_sel_end = text_buffer->get_iter_at_offset(bound_offset);
-            property_value = _links_entries_post_dialog(glb_link_entry);
+            property_value = _links_entries_post_dialog(_link_entry);
         } else {
             // todo: assert tag_property[0] in ['f', 'b'], "!! bad tag_property '%s'" % tag_property
-            Gdk::RGBA ret_color = Gdk::RGBA(CtApp::P_ctCfg->currColors.at(tag_property[0]));
+            gchar color_for = tag_property[0] == 'f' ? 'f' : 'b';
+            Gdk::RGBA ret_color = Gdk::RGBA(CtApp::P_ctCfg->currColors.at(color_for));
             if (!ct_dialogs::color_pick_dialog(*_pCtMainWin, ret_color))
                 return;
-            CtApp::P_ctCfg->currColors[tag_property[0]] = CtRgbUtil::rgb_to_string(ret_color);
+            CtApp::P_ctCfg->currColors[color_for] = CtRgbUtil::rgb_to_string(ret_color);
             property_value = CtRgbUtil::rgb_to_string(ret_color);
         }
     }
@@ -333,7 +330,7 @@ void CtActions::_apply_tag(const Glib::ustring& tag_property, Glib::ustring prop
         }
     }
     if (!property_value.empty())
-        text_buffer->apply_tag_by_name(_apply_tag_exist_or_create(tag_property, property_value),
+        text_buffer->apply_tag_by_name(apply_tag_exist_or_create(tag_property, property_value),
                                       text_buffer->get_iter_at_offset(sel_start_offset),
                                       text_buffer->get_iter_at_offset(sel_end_offset));
     if (_pCtMainWin->user_active())
@@ -341,7 +338,7 @@ void CtActions::_apply_tag(const Glib::ustring& tag_property, Glib::ustring prop
 }
 
 // Check into the Tags Table whether the Tag Exists, if Not Creates it
-Glib::ustring CtActions::_apply_tag_exist_or_create(const Glib::ustring& tag_property, Glib::ustring property_value)
+Glib::ustring CtActions::apply_tag_exist_or_create(const Glib::ustring& tag_property, Glib::ustring property_value)
 {
     if (property_value == "large")      property_value = CtConst::TAG_PROP_VAL_H1;
     else if (property_value == "largo") property_value = CtConst::TAG_PROP_VAL_H2;
@@ -398,75 +395,30 @@ Glib::ustring CtActions::_apply_tag_exist_or_create(const Glib::ustring& tag_pro
 
 CtActions::text_view_n_buffer_codebox_proof CtActions::_get_text_view_n_buffer_codebox_proof()
 {
-    /* todo:
-    anchor = self.codeboxes_handler.codebox_in_use_get_anchor()
-    if anchor is not None:
-        text_view = anchor.sourceview
-        text_buffer = text_view.get_buffer()
-        syntax_highl = anchor.syntax_highlighting
-        from_codebox = True
-    else:
-        text_buffer = self.curr_buffer
-        text_view = self.sourceview
-        syntax_highl = self.syntax_highlighting
-        from_codebox = False
-     */
-    return text_view_n_buffer_codebox_proof{&_pCtMainWin->get_text_view(),
-                _pCtMainWin->get_text_view().get_buffer(),
-                _pCtMainWin->curr_tree_iter().get_node_syntax_highlighting(),
-                false};
+    CtCodebox* codebox = _codebox_in_use();
+    if (codebox)
+        return text_view_n_buffer_codebox_proof{&codebox->getTextView(),
+                    codebox->getTextView().get_buffer(),
+                    codebox->getSyntaxHighlighting(),
+                    true};
+    else
+        return text_view_n_buffer_codebox_proof{&_pCtMainWin->get_text_view(),
+                    _pCtMainWin->get_text_view().get_buffer(),
+                    _pCtMainWin->curr_tree_iter().get_node_syntax_highlighting(),
+                    false};
 }
 
-// Try to Select a Word Forward/Backward the Cursor
-bool CtActions::_apply_tag_try_automatic_bounds(Glib::RefPtr<Gtk::TextBuffer> text_buffer, Gtk::TextIter iter_start)
+// Returns a CodeBox SourceView if Currently in Use or None
+CtCodebox* CtActions::_codebox_in_use()
 {
-    Gtk::TextIter iter_end = iter_start;
-    auto curr_char = iter_end.get_char();
-    auto re = Glib::Regex::create("\\w");
-    // 1) select alphanumeric + special
-    bool match = re->match(Glib::ustring(1, curr_char));
-    if (!match && CtApp::P_ctCfg->selwordChars.find(curr_char) == Glib::ustring::npos) {
-        iter_start.backward_char();
-        iter_end.backward_char();
-        curr_char = iter_end.get_char();
-        match = re->match(Glib::ustring(1, curr_char));
-        if (!match && CtApp::P_ctCfg->selwordChars.find(curr_char) == Glib::ustring::npos)
-            return false;
-    }
-    while (match || CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
-        if (!iter_end.forward_char()) break; // end of buffer
-        curr_char = iter_end.get_char();
-        match = re->match(Glib::ustring(1, curr_char));
-    }
-    iter_start.backward_char();
-    curr_char = iter_start.get_char();
-    match = re->match(Glib::ustring(1, curr_char));
-    while (match || CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
-        if (!iter_start.backward_char()) break; // start of buffer
-        curr_char = iter_start.get_char();
-        match = re->match(Glib::ustring(1, curr_char));
-    }
-    if (!match && CtApp::P_ctCfg->selwordChars.find(curr_char) == Glib::ustring::npos)
-        iter_start.forward_char();
-    // 2) remove non alphanumeric from borders
-    iter_end.backward_char();
-    curr_char = iter_end.get_char();
-    while (CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
-        if (!iter_end.backward_char()) break; // start of buffer
-        curr_char = iter_end.get_char();
-    }
-    iter_end.forward_char();
-    curr_char = iter_start.get_char();
-    while (CtApp::P_ctCfg->selwordChars.find(curr_char) != Glib::ustring::npos) {
-        if (!iter_start.forward_char()) break; // end of buffer
-        curr_char = iter_start.get_char();
-    }
-    if (iter_end.compare(iter_start) > 0) {
-        text_buffer->move_mark(text_buffer->get_insert(), iter_start);
-        text_buffer->move_mark(text_buffer->get_selection_bound(), iter_end);
-        return true;
-    }
-    return false;
+    if (!curr_codebox_anchor) return nullptr;
+    if (!curr_buffer()) return nullptr;
+    Gtk::TextIter iter_sel_start = curr_buffer()->get_insert()->get_iter();
+    auto widgets = _pCtMainWin->curr_tree_iter().get_embedded_pixbufs_tables_codeboxes({iter_sel_start.get_offset(), iter_sel_start.get_offset()});
+    if (widgets.empty()) return nullptr;
+    if (CtCodebox* codebox = dynamic_cast<CtCodebox*>(widgets.front()))
+        return codebox;
+    return nullptr;
 }
 
 // Prepare Global Links Variables for Dialog

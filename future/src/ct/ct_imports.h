@@ -1,5 +1,5 @@
 /*
- * ct_p7za_iface.h
+ * ct_imports.h
  *
  * Copyright 2017-2019 Giuseppe Penone <giuspen@gmail.com>
  *
@@ -20,12 +20,12 @@
  */
 
 #pragma once
-#include <glib/gtypes.h>
 
-namespace CtP7zaIface {
+#include <vector>
+#include <glibmm/ustring.h>
 
-int p7za_extract(const gchar* input_path, const gchar* out_dir, const gchar* passwd);
+namespace CtImports {
 
-int p7za_archive(const gchar* input_path, const gchar* output_path, const gchar* passwd);
+std::vector<std::pair<int, int>> get_web_links_offsets_from_plain_text(const Glib::ustring& plain_text);
 
-} // namespace CtP7zaIface
+}
